@@ -1,0 +1,82 @@
+# Synthetic knowledge pack for the UC-01 controlled case.
+# None of this is official Dubai Municipality/BPS logic (BR-08).
+version: synthetic-2026.1
+
+sources:
+  - id: SYN-ARCH
+    title: Synthetic drawing-update convention
+    kind: synthetic
+  - id: SYN-STRUCT
+    title: Synthetic structural-change convention
+    kind: synthetic
+  - id: SYN-FIRE-A
+    title: Synthetic fire-safety mandate A
+    kind: synthetic
+  - id: SYN-FIRE-B
+    title: Synthetic fire-safety mandate B
+    kind: synthetic
+  - id: SYN-GOV
+    title: Synthetic process-gap register
+    kind: synthetic
+
+change_types: [wall_relocation]
+safety_domains: [structural, fire_safety]
+
+roles: [consultant, coordinator, authority, observer]
+resolution_roles: [authority]
+
+bim_formats: [ifc]
+bim_evidence_types: [floor_plan, design_model]
+bim_required_for: [new_permit]
+
+stages: [design_change, package_prepared, under_review, approved_simulated]
+
+actions:
+  - id: prepare_review_package
+    from_stage: design_change
+    to_stage: package_prepared
+    roles: [consultant, coordinator]
+    autonomy: autonomous
+  - id: submit_for_review
+    from_stage: package_prepared
+    to_stage: under_review
+    roles: [consultant, coordinator]
+    autonomy: conditional
+  - id: approve_modification
+    from_stage: under_review
+    to_stage: approved_simulated
+    roles: [authority]
+    autonomy: human_only
+
+rules:
+  - id: R-ARC-01
+    domain: architectural
+    source: SYN-ARCH
+    when: {change_type: wall_relocation}
+    requires_evidence: [floor_plan]
+  - id: R-STR-01
+    domain: structural
+    source: SYN-STRUCT
+    when: {change_type: wall_relocation, load_bearing: true}
+    requires_evidence: [structural_assessment]
+  - id: R-FIR-01
+    domain: fire_safety
+    source: SYN-FIRE-A
+    when: {change_type: wall_relocation, fire_compartment_boundary: true}
+    requires_evidence: [fire_strategy]
+  - id: R-FIR-02
+    domain: fire_safety
+    source: SYN-FIRE-A
+    when: {change_type: wall_relocation, fire_compartment_boundary: true, occupancy: mixed_use}
+    sets: {parameter: fire_rating_minutes, value: 60}
+  - id: R-FIR-03
+    domain: fire_safety
+    source: SYN-FIRE-B
+    when: {change_type: wall_relocation, fire_compartment_boundary: true, occupancy: mixed_use}
+    sets: {parameter: fire_rating_minutes, value: 120}
+
+gaps:
+  - id: GAP-01
+    source: SYN-GOV
+    when: {heritage_zone: true}
+    description: The sources do not establish which authority reviews changes in a heritage zone.

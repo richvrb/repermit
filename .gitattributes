@@ -1,0 +1,4 @@
+* text=auto
+*.ifc -text
+*.docx binary
+*.pdf binary

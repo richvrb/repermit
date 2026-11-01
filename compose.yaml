@@ -1,0 +1,33 @@
+services:
+  api:
+    build: .
+    environment:
+      REPERMIT_DATABASE_URL: postgresql+psycopg://repermit:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/repermit
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      REPERMIT_LLM_PROVIDER: ${REPERMIT_LLM_PROVIDER:-anthropic}
+      REPERMIT_LLM_MODEL: ${REPERMIT_LLM_MODEL:-claude-opus-5-5}
+    ports:
+      # Loopback only: actor roles are simulated, so the API must not be exposed.
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: repermit
+      POSTGRES_DB: repermit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U repermit -d repermit"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  db-data:

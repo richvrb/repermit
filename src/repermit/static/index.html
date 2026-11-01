@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RePermit demo</title>
+<link rel="icon" href="data:,">
+<style>
+:root {
+  --bg: #f4f5f7; --surface: #fff; --border: #dfe3e8; --text: #1c2430; --muted: #5d6877;
+  --accent: #1f5fbf; --accent-text: #fff; --ai: #6a3fb5; --ai-bg: #f3eefb;
+  --ok: #17703f; --ok-bg: #e4f4ea; --warn: #8a5a00; --warn-bg: #fdf2d8;
+  --bad: #ab2a2a; --bad-bg: #fbe6e6; --info: #1f5fbf; --info-bg: #e6effb; --neutral-bg: #eceff3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12161c; --surface: #1b2129; --border: #2f3743; --text: #e7ebf0; --muted: #9aa5b3;
+    --accent: #6ea4f0; --accent-text: #10151b; --ai: #bb9df0; --ai-bg: #2a2340;
+    --ok: #6fd39b; --ok-bg: #16352a; --warn: #eec25f; --warn-bg: #3a2f12;
+    --bad: #f29a9a; --bad-bg: #40201f; --info: #8db9f5; --info-bg: #1b2d47; --neutral-bg: #272e38;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, "Segoe UI", sans-serif; }
+header.top { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--border); }
+header.top h1 { font-size: 18px; margin: 0; }
+header.top .tag { color: var(--muted); font-size: 14px; }
+header.top .role { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 16px; padding: 16px 20px; align-items: start; }
+aside { display: grid; gap: 16px; }
+main { display: grid; gap: 16px; min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+.panel.ai { border-color: var(--ai); }
+h2 { font-size: 15px; margin: 0 0 8px; }
+h3 { font-size: 14px; margin: 14px 0 6px; }
+p { margin: 4px 0; }
+.muted { color: var(--muted); font-size: 13px; }
+.ai-label { color: var(--ai); font-weight: 600; }
+button, select, input, textarea { font: inherit; color: inherit; }
+select, input, textarea { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; width: 100%; }
+header.top select { width: auto; }
+button { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+button.ai { color: var(--ai); border-color: var(--ai); font-weight: 600; }
+button:disabled { opacity: .55; cursor: wait; }
+.scenario, .case-row { display: block; width: 100%; text-align: left; padding: 8px 10px; margin-bottom: 6px; }
+.scenario .title, .case-row .title { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+.case-row.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.scroll { max-height: 42vh; overflow-y: auto; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; white-space: nowrap; flex: none; align-self: flex-start; background: var(--neutral-bg); color: var(--muted); }
+.badge.ok { background: var(--ok-bg); color: var(--ok); }
+.badge.warn { background: var(--warn-bg); color: var(--warn); }
+.badge.bad { background: var(--bad-bg); color: var(--bad); }
+.badge.info { background: var(--info-bg); color: var(--info); }
+.badge.ai { background: var(--ai-bg); color: var(--ai); }
+.case-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: center; }
+.case-head h2 { font-size: 18px; margin: 0; }
+.stages { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+.stage { flex: 1 1 130px; padding: 6px 10px; border-radius: 6px; background: var(--neutral-bg); color: var(--muted); font-size: 13px; }
+.stage.done { background: var(--ok-bg); color: var(--ok); }
+.stage.current { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+.replay-note { background: var(--warn-bg); color: var(--warn); padding: 6px 10px; border-radius: 6px; margin-top: 10px; font-size: 14px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; color: var(--muted); font-weight: 600; font-size: 13px; }
+th, td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+.request { border-top: 1px solid var(--border); padding: 8px 0; }
+.request:first-of-type { border-top: 0; }
+.answer { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.answer select { width: auto; }
+.answer input[type=file] { width: auto; flex: 1 1 200px; }
+label.answer { align-items: center; font-size: 14px; }
+.issue { background: var(--bad-bg); border-radius: 6px; padding: 8px 10px; margin-top: 8px; }
+ol.timeline { list-style: none; margin: 8px 0 0; padding: 0; }
+ol.timeline li { border-left: 2px solid var(--border); padding-left: 12px; margin-left: 6px; }
+ol.timeline button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 6px 8px; border-radius: 6px; }
+ol.timeline li.future { opacity: .45; }
+ol.timeline li.current button { background: var(--info-bg); }
+ol.timeline li.ai { border-left-color: var(--ai); }
+ol.timeline li.bad { border-left-color: var(--bad); }
+ol.timeline li.ok { border-left-color: var(--ok); }
+.step-title { font-weight: 600; }
+.controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.empty { padding: 48px 16px; text-align: center; color: var(--muted); }
+.notice { padding: 8px 20px 20px; color: var(--muted); font-size: 13px; }
+#toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); max-width: min(640px, calc(100% - 32px)); padding: 10px 14px; border-radius: 6px; background: var(--bad-bg); color: var(--bad); border: 1px solid var(--bad); display: none; }
+#toast.ok { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+dialog { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; width: min(520px, calc(100% - 32px)); }
+dialog label { display: block; margin-top: 10px; font-size: 14px; }
+dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: minmax(0, 1fr); padding: 12px 16px; }
+  .grid2 { grid-template-columns: minmax(0, 1fr); }
+  header.top { padding: 12px 16px; }
+  .scroll { max-height: none; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>RePermit demo</h1>
+  <span class="tag">A building permit moving through the process with AI</span>
+  <label class="role">Acting as <select id="role"></select></label>
+</header>
+<div class="layout">
+  <aside>
+    <section class="panel">
+      <h2>Test cases</h2>
+      <p class="muted">Start a test case. The AI cases call Claude and take up to a minute.</p>
+      <div id="scenarios" class="scroll"></div>
+      <button id="own" class="ai">Submit your own request</button>
+    </section>
+    <section class="panel">
+      <h2>Started cases</h2>
+      <div id="cases" class="scroll"></div>
+    </section>
+  </aside>
+  <main id="main"><div class="panel empty">Choose a test case on the left to see the flow.</div></main>
+</div>
+<p class="notice" id="notice"></p>
+<div id="toast" role="status"></div>
+<dialog id="dialog"></dialog>
+
+<script>
+const LABELS = {
+  status: { open: "Open", pending_evidence: "Waiting for information", escalated: "Escalated", awaiting_review: "Waiting for review", ready: "Ready", completed: "Completed" },
+  statusClass: { open: "", pending_evidence: "warn", escalated: "bad", awaiting_review: "info", ready: "info", completed: "ok" },
+  stage: { design_change: "Design change", package_prepared: "Package prepared", under_review: "Under review", approved_simulated: "Approved (simulated)" },
+  domain: { architectural: "Architecture", structural: "Structure", fire_safety: "Fire safety", general: "General", permitting: "Permitting", planning: "Planning", heritage: "Heritage" },
+  domainStatus: { affected: "Affected", potentially_affected: "Potentially affected", not_affected: "Not affected" },
+  domainClass: { affected: "bad", potentially_affected: "warn", not_affected: "ok" },
+  action: { prepare_review_package: "Prepare review package", submit_for_review: "Submit for review", approve_modification: "Approve modification" },
+  autonomy: { autonomous: "May run automatically", human_review: "Human review required", human_only: "Humans only" },
+  role: { consultant: "Consultant", coordinator: "Coordinator", authority: "Authority", observer: "Observer" },
+  issue: { rule_conflict: "Rules contradict each other", process_gap: "Process gap", retrieval_gap: "Not covered by the rules", llm_flag: "AI sees a risk outside the rules", llm_unavailable: "AI review unavailable" },
+  deficiency: { missing: "Missing", insufficient: "Insufficient", outdated: "Expired", revision_unknown: "Revision unknown", stale_revision: "Belongs to an old revision", unknown_fact: "Not yet known", inconsistent_fact: "Contradictory", ai_question: "AI question" },
+  impact: { retained: "Still valid", review: "Check", revalidate: "Revalidate" },
+  subject: {
+    floor_plan: "Floor plan", design_model: "Design model (IFC)", baseline_model: "Baseline model (IFC)", fire_strategy: "Fire strategy", structural_assessment: "Structural assessment",
+    load_bearing: "Is the wall load-bearing?", fire_compartment_boundary: "Is the wall a fire compartment boundary?", occupancy: "What is the building used for?",
+  },
+  reason: { not_authorized: "role lacks permission", held: "action is on hold", not_available: "action is not next in the process" },
+};
+const OCCUPANCY = [["residential", "Residential"], ["mixed_use", "Mixed use"], ["commercial", "Commercial"]];
+const label = (group, key) => LABELS[group][key] || key;
+const subject = (key) => ((state.latest && state.latest.labels) || {})[key] || label("subject", key);
+const $ = (id) => document.getElementById(id);
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+    else if (value === true) node.setAttribute(key, "");
+    else if (value !== false && value != null) node.setAttribute(key, value);
+  }
+  for (const child of children.flat()) {
+    if (child != null && child !== false) node.append(child);
+  }
+  return node;
+}
+
+const badge = (text, cls = "") => el("span", { class: `badge ${cls}` }, text);
+
+function errorMessage(status, detail) {
+  const text = Array.isArray(detail) ? detail.map((item) => item.msg).join("; ") : String(detail);
+  if (status === 403) return "Refused: this role lacks permission. The refusal is recorded in the flow.";
+  if (status === 409) return "Not possible now: the action is on hold or not next in the process. The refusal is recorded in the flow.";
+  if (text.includes("BIM")) return "Refused: a new building permit must be delivered in BIM (IFC).";
+  return `Something went wrong (${status}): ${text}`;
+}
+
+async function api(path, method = "GET", body) {
+  const response = await fetch(path, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(errorMessage(response.status, data.detail));
+  return data;
+}
+
+let toastTimer;
+function toast(message, ok = false) {
+  const node = $("toast");
+  node.textContent = message;
+  node.className = ok ? "ok" : "";
+  node.style.display = "block";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { node.style.display = "none"; }, 7000);
+}
+
+const emptyDraft = () => ({ facts: {}, answers: {}, documents: {}, note: "" });
+const state = { draft: emptyDraft(), meta: null, role: "consultant", cases: [], caseId: null, view: null, latest: null, history: [], at: null, timer: null };
+
+async function run(button, text, work) {
+  const original = [...button.childNodes];
+  button.disabled = true;
+  if (text) button.textContent = text;
+  try {
+    await work();
+  } catch (error) {
+    toast(error.message);
+    await refresh();
+  } finally {
+    button.disabled = false;
+    button.replaceChildren(...original);
+  }
+}
+
+async function loadLists() {
+  state.cases = await api("/cases");
+  $("cases").replaceChildren(...(state.cases.length ? state.cases.map(caseRow) : [el("p", { class: "muted" }, "No cases yet.")]));
+}
+
+function caseRow(item) {
+  return el("button", {
+    class: `case-row ${item.case_id === state.caseId ? "active" : ""}`,
+    onclick: () => openCase(item.case_id),
+  },
+    el("span", { class: "title" }, item.project_name.replace("[SYNTHETIC] ", ""), badge(label("status", item.status), LABELS.statusClass[item.status])),
+    el("span", { class: "muted" }, label("stage", item.stage)));
+}
+
+function scenarioRow(item) {
+  return el("button", {
+    class: "scenario",
+    disabled: !item.available,
+    onclick: (event) => run(event.currentTarget, item.live ? "Claude is reviewing…" : "Working…", async () => {
+      const created = await api(`/demo/scenarios/${item.id}`, "POST");
+      await openCase(created.case_id);
+    }),
+  },
+    el("span", { class: "title" }, item.title, badge(item.flow, item.live ? "ai" : "")),
+    el("span", { class: "muted" }, item.available ? `${item.summary}${item.expected_type ? ` Expected type: ${item.expected_type}.` : ""}` : "Requires a configured LLM."));
+}
+
+async function openCase(caseId) {
+  stopPlaying();
+  state.caseId = caseId;
+  state.draft = emptyDraft();
+  state.at = null;
+  location.hash = caseId;
+  await refresh();
+}
+
+async function refresh() {
+  await loadLists();
+  if (!state.caseId) return;
+  [state.latest, state.history] = await Promise.all([api(`/cases/${state.caseId}`), api(`/cases/${state.caseId}/history`)]);
+  state.view = state.at ? await api(`/cases/${state.caseId}?at=${state.at}`) : state.latest;
+  render();
+}
+
+async function showStep(step) {
+  state.at = step >= state.history.length ? null : step;
+  state.view = state.at ? await api(`/cases/${state.caseId}?at=${state.at}`) : state.latest;
+  render();
+}
+
+function stopPlaying() {
+  clearInterval(state.timer);
+  state.timer = null;
+}
+
+function togglePlay() {
+  if (state.timer) {
+    stopPlaying();
+    render();
+    return;
+  }
+  showStep(state.at ? state.at : 1);
+  if (!state.at && state.history.length > 1) state.at = 1;
+  state.timer = setInterval(() => {
+    if (!state.at) { stopPlaying(); render(); return; }
+    showStep(state.at + 1);
+  }, 1300);
+}
+
+function render() {
+  const view = state.view;
+  const readOnly = state.at !== null;
+  const sections = [headerPanel(view, readOnly)];
+  if (view.bim_required) sections.push(bimPanel(view, readOnly));
+  if (view.assessment) {
+    const left = [nextStepPanel(view, readOnly), informationPanel(view, readOnly)];
+    sections.push(el("div", { class: "grid2" }, el("div", { style: "display:grid;gap:16px;align-content:start" }, left), aiPanel(view, readOnly)));
+    sections.push(domainPanel(view));
+  } else {
+    sections.push(el("div", { class: "panel muted" }, "At this point the rules have not assessed the modification yet. Choose a later step in the flow."));
+  }
+  sections.push(flowPanel());
+  if (view.evidence.length) sections.push(evidencePanel(view));
+  $("main").replaceChildren(...sections);
+}
+
+function headerPanel(view, readOnly) {
+  const stages = state.meta.stages;
+  const current = stages.indexOf(view.stage);
+  return el("section", { class: "panel" },
+    el("div", { class: "case-head" },
+      el("div", {}, el("h2", {}, view.project_name.replace("[SYNTHETIC] ", "")),
+        el("span", { class: "muted" }, `Rules: ${view.pack_version} · design revision ${view.revision}${view.modification ? ` · type ${view.modification.change_type}` : ""}`)),
+      badge(label("status", view.status), LABELS.statusClass[view.status])),
+    view.modification && el("p", {}, view.modification.description),
+    el("div", { class: "stages" }, stages.map((stage, index) => el("div", {
+      class: `stage ${index < current ? "done" : index === current ? "current" : ""}`,
+    }, label("stage", stage)))),
+    readOnly && el("div", { class: "replay-note" }, `Replay: step ${state.at} of ${state.history.length}. Go to the last step to continue working.`));
+}
+
+function nextStepPanel(view, readOnly) {
+  const plan = view.plan;
+  const panel = el("section", { class: "panel" }, el("h2", {}, "Next step"));
+  if (!plan.next_action) {
+    panel.append(el("p", {}, view.status === "completed" ? "The process is complete." : "There is no next action."));
+    return panel;
+  }
+  panel.append(el("p", {}, el("strong", {}, label("action", plan.next_action))),
+    el("p", {}, badge(label("autonomy", plan.autonomy), "info"), " ", plan.held ? badge("On hold", "warn") : badge("Not blocked", "ok")));
+  if (plan.held) panel.append(el("p", { class: "muted" }, "This step waits until the open items below are resolved."));
+  if (!readOnly) {
+    panel.append(el("p", {}, el("button", {
+      class: "primary",
+      onclick: (event) => run(event.currentTarget, "Working…", async () => {
+        await api(`/cases/${view.case_id}/actions`, "POST", { action: plan.next_action, actor_id: "demo-user", role: state.role });
+        toast("Action performed.", true);
+        await refresh();
+      }),
+    }, `Perform as ${label("role", state.role)}`)));
+  }
+  return panel;
+}
+
+function informationPanel(view, readOnly) {
+  const { deficiencies, issues } = view.assessment;
+  const heading = view.review_round ? `Round ${view.review_round} of at most ${view.max_review_rounds}: open items` : "Open items";
+  const panel = el("section", { class: "panel" }, el("h2", {}, heading));
+  if (!deficiencies.length && !issues.length) panel.append(el("p", { class: "muted" }, "There are no open items."));
+  for (const item of deficiencies) panel.append(deficiencyRow(item, readOnly));
+  for (const issue of issues) panel.append(issueRow(issue, view, readOnly));
+  if (!readOnly) panel.append(el("h3", {}, "Add more information"), responseForm(view));
+  return panel;
+}
+
+function deficiencyRow(item, readOnly) {
+  const row = el("div", { class: "request" },
+    el("div", {}, el("strong", {}, item.question || subject(item.subject)), " ", badge(label("deficiency", item.code), item.code === "ai_question" ? "ai" : "warn")),
+    item.domain && el("span", { class: "muted" }, label("domain", item.domain)),
+    item.code === "ai_question" && el("div", { class: "muted" }, item.detail));
+  if (readOnly) return row;
+  if (item.code === "unknown_fact" || item.code === "inconsistent_fact") row.append(factInput(item));
+  else if (item.code === "ai_question") row.append(answerInput(item));
+  else if (item.subject === "design_model") row.append(el("p", { class: "muted" }, "Upload the IFC file in the BIM model panel."));
+  else row.append(documentInput(item));
+  return row;
+}
+
+function factChoices(item) {
+  if (item.options && item.options.length) return item.options.map((option) => [option.value, option.label]);
+  if (item.subject === "occupancy") return OCCUPANCY;
+  return [[true, "Yes"], [false, "No"]];
+}
+
+function factInput(item) {
+  const choices = factChoices(item);
+  const current = choices.findIndex(([value]) => value === state.draft.facts[item.subject]);
+  const select = el("select", {
+    "aria-label": item.question || subject(item.subject),
+    onchange: (event) => {
+      if (event.target.value === "") delete state.draft.facts[item.subject];
+      else state.draft.facts[item.subject] = choices[Number(event.target.value)][0];
+    },
+  }, el("option", { value: "" }, "Choose an answer"), choices.map(([, text], index) => el("option", { value: String(index), selected: index === current }, text)));
+  return el("div", { class: "answer" }, select);
+}
+
+function answerInput(item) {
+  const input = el("textarea", { rows: 2, "aria-label": item.question, placeholder: "Your answer", oninput: (event) => { state.draft.answers[item.question] = event.target.value; } });
+  input.value = state.draft.answers[item.question] || "";
+  return input;
+}
+
+function documentInput(item) {
+  const box = el("input", { type: "checkbox", style: "width:auto", onchange: (event) => { state.draft.documents[item.subject] = event.target.checked; } });
+  box.checked = Boolean(state.draft.documents[item.subject]);
+  return el("label", { class: "answer" }, box, "Add document (simulated)");
+}
+
+function responseForm(view) {
+  const note = el("textarea", { rows: 2, placeholder: "For example: the wall is gypsum block and runs up to the ceiling.", oninput: (event) => { state.draft.note = event.target.value; } });
+  note.value = state.draft.note;
+  const reviewed = Boolean(view.assessment.llm_review);
+  return el("div", {}, note, el("div", { class: "answer" }, el("button", {
+    class: "primary",
+    onclick: (event) => run(event.currentTarget, reviewed ? "Claude is reviewing…" : "Working…", async () => {
+      const { facts, answers, documents, note: text } = state.draft;
+      await api(`/cases/${view.case_id}/responses`, "POST", {
+        facts,
+        answers: Object.entries(answers).map(([question, answer]) => ({ question, answer })),
+        documents: Object.keys(documents).filter((key) => documents[key]),
+        note: text,
+      });
+      state.draft = emptyDraft();
+      toast(reviewed ? "Information added. Rules and Claude have assessed the case again." : "Information added and reassessed by the rules.", true);
+      await refresh();
+    }),
+  }, reviewed ? "Submit and start next round" : "Submit")),
+    reviewed && el("p", { class: "muted" }, "Everything you filled in goes together into one new assessment. This takes up to a minute."));
+}
+
+async function uploadModel(view, kind, filename, content) {
+  const params = new URLSearchParams({ kind, filename });
+  const response = await fetch(`/cases/${view.case_id}/models?${params}`, { method: "POST", body: content });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(errorMessage(response.status, data.detail));
+  toast("Model read and the case reassessed.", true);
+  await refresh();
+}
+
+function modelRow(item) {
+  const model = item.model;
+  const counts = Object.entries(model.elements).map(([name, count]) => `${count} ${name.replace("Ifc", "")}`).join(", ");
+  return el("div", { class: "request" },
+    el("strong", {}, subject(item.type)), " ", badge(`${model.schema}, version ${item.version}`, "info"),
+    el("div", { class: "muted" }, `${model.filename}: ${counts}`),
+    item.type === "design_model" && el("p", {}, model.compared ? `${item.changes.length} changed elements compared with the baseline.` : "No baseline, so nothing was compared."),
+    item.changes && item.changes.length > 0 && el("ul", {}, item.changes.map((change) => el("li", {},
+      `${change.change}: ${change.name} (${change.class.replace("Ifc", "")})${Object.keys(change.properties).length ? `, ${Object.entries(change.properties).map(([key, value]) => `${key} ${value}`).join(", ")}` : ""}`))),
+    Object.keys(item.facts).length > 0 && el("p", { class: "muted" }, `Established from the model: ${Object.entries(item.facts).map(([key, value]) => `${key} = ${value}`).join(", ")}`));
+}
+
+function fileButton(view, kind, text) {
+  const input = el("input", { type: "file", accept: ".ifc", "aria-label": text });
+  return el("div", { class: "answer" }, input, el("button", {
+    onclick: (event) => {
+      if (!input.files.length) return;
+      run(event.currentTarget, "Reading…", () => uploadModel(view, kind, input.files[0].name, input.files[0]));
+    },
+  }, text));
+}
+
+function bimPanel(view, readOnly) {
+  const models = view.evidence.filter((item) => item.model);
+  const hasBaseline = models.some((item) => item.type === "baseline_model");
+  const panel = el("section", { class: "panel" }, el("h2", {}, "BIM model"),
+    el("p", { class: "muted" }, "This permit must be delivered as a real IFC file. The app reads it, compares it with the approved baseline and uses the result in the assessment."),
+    models.map(modelRow));
+  if (readOnly) return panel;
+  if (view.scenario && !models.some((item) => item.type === "design_model")) {
+    panel.append(el("p", {}, el("button", {
+      class: "primary",
+      onclick: (event) => run(event.currentTarget, "Reading…", async () => {
+        const sample = await (await fetch(`/demo/models/${view.scenario}/proposed`)).blob();
+        await uploadModel(view, "proposed", `${view.scenario}-proposed.ifc`, sample);
+      }),
+    }, "Use the sample proposed model")));
+  }
+  if (!hasBaseline) panel.append(fileButton(view, "baseline", "Upload baseline model"));
+  panel.append(fileButton(view, "proposed", "Upload proposed model"));
+  if (view.scenario) panel.append(el("p", { class: "muted" }, el("a", { href: `/demo/models/${view.scenario}/proposed` }, "Download the sample model")));
+  return panel;
+}
+
+function issueRow(issue, view, readOnly) {
+  return el("div", { class: "issue" },
+    el("strong", {}, label("issue", issue.kind)),
+    el("p", {}, issue.detail),
+    issue.rules.length ? el("p", { class: "muted" }, `Rules: ${issue.rules.join(", ")}`) : null,
+    !readOnly && el("button", { onclick: () => resolveDialog(issue, view) }, "Resolve"));
+}
+
+function resolveDialog(issue, view) {
+  const source = el("input", { value: "Authority clarification (simulated)" });
+  const decision = el("textarea", { rows: 2 }, "Reviewed and released for the demo.");
+  const rule = el("select", {}, issue.rules.map((id) => el("option", { value: id }, id)));
+  const dialog = $("dialog");
+  dialog.replaceChildren(el("form", { method: "dialog" },
+    el("h2", {}, label("issue", issue.kind)),
+    el("p", { class: "muted" }, `You are acting as ${label("role", state.role)}. Only the authority may resolve this.`),
+    issue.kind === "rule_conflict" && el("label", {}, "Applicable rule", rule),
+    el("label", {}, "Source", source),
+    el("label", {}, "Decision", decision),
+    el("div", { class: "row" },
+      el("button", { value: "cancel" }, "Cancel"),
+      el("button", {
+        class: "primary",
+        onclick: (event) => {
+          event.preventDefault();
+          run(event.currentTarget, "Working…", async () => {
+            dialog.close();
+            await api(`/cases/${view.case_id}/resolutions`, "POST", {
+              issue_id: issue.id, actor_id: "demo-user", role: state.role, source: source.value, decision: decision.value,
+              selected_rule_id: issue.kind === "rule_conflict" ? rule.value : null,
+            });
+            toast("Item resolved.", true);
+            await refresh();
+          });
+        },
+      }, "Resolve"))));
+  dialog.showModal();
+}
+
+function aiPanel(view, readOnly) {
+  const review = view.assessment.llm_review;
+  const panel = el("section", { class: "panel ai" }, el("h2", {}, el("span", { class: "ai-label" }, "AI review")));
+  if (!review) {
+    panel.append(el("p", { class: "muted" }, "This test case runs without AI, on the rules only."));
+  } else if (review.status === "unavailable") {
+    panel.append(el("p", {}, `No AI review obtained: ${review.reason}`));
+  } else {
+    panel.append(
+      el("p", {}, review.summary),
+      el("p", {}, badge(`Type: ${review.change_type}`, "ai"), " ", badge(`Confidence: ${review.confidence}`, "ai"), " ", badge(`Materiality: ${review.materiality}`, "ai")));
+    if (review.proposed_facts.length) {
+      panel.append(el("h3", {}, "Proposed facts"), el("p", { class: "muted" }, "These are suggestions. They only count once confirmed."));
+      for (const fact of review.proposed_facts) {
+        panel.append(el("div", { class: "request" }, el("strong", {}, `${fact.name}: ${fact.value}`), el("div", { class: "muted" }, fact.basis)));
+      }
+    }
+    if (review.uncertainties.length) {
+      panel.append(el("details", {}, el("summary", {}, `Uncertainties (${review.uncertainties.length})`),
+        el("ul", {}, review.uncertainties.map((item) => el("li", {}, item)))));
+    }
+    panel.append(el("p", { class: "muted" }, `Advice from ${review.model}. Rules and evidence decide.`));
+  }
+  if (!readOnly && state.meta.llm_enabled) {
+    panel.append(el("p", {}, el("button", {
+      class: "ai",
+      onclick: (event) => run(event.currentTarget, "Claude is reviewing…", async () => {
+        await api(`/cases/${view.case_id}/llm-review`, "POST");
+        toast("Claude has reviewed again.", true);
+        await refresh();
+      }),
+    }, "Ask Claude to review again")));
+  }
+  return panel;
+}
+
+function domainPanel(view) {
+  const { domains, llm_review: review, applied_rules: rules } = view.assessment;
+  const findings = Object.fromEntries(((review && review.domains) || []).map((item) => [item.domain, item]));
+  const names = [...new Set([...Object.keys(domains), ...Object.keys(findings)])];
+  return el("section", { class: "panel" },
+    el("h2", {}, "Rules and AI side by side"),
+    el("div", { style: "overflow-x:auto" }, el("table", {},
+      el("thead", {}, el("tr", {}, ["Domain", "Rules (decisive)", "AI (advisory)", "Applied rules", "AI rationale"].map((text) => el("th", {}, text)))),
+      el("tbody", {}, names.map((name) => {
+        const status = domains[name] || "not_affected";
+        const finding = findings[name];
+        return el("tr", {},
+          el("td", {}, label("domain", name)),
+          el("td", {}, badge(label("domainStatus", status), LABELS.domainClass[status])),
+          el("td", {}, finding ? badge(label("domainStatus", finding.status), "ai") : "–"),
+          el("td", {}, rules.filter((rule) => rule.domain === name).map((rule) => el("div", { title: rule.source_title || "" },
+            `${rule.title || rule.rule}${rule.reference ? `, ${rule.reference}` : ""} (${rule.source_kind})`))),
+          el("td", { class: "muted" }, finding ? finding.rationale : ""));
+      })))));
+}
+
+function describeEvent(event) {
+  const payload = event.payload;
+  switch (event.type) {
+    case "case_opened":
+      return { title: "Case opened", text: `Design revision ${payload.revision}` };
+    case "modification_submitted":
+      return { title: "Modification submitted", tag: "H0.1", text: payload.description };
+    case "llm_review_recorded":
+      return payload.status === "completed"
+        ? { title: `AI review, round ${payload.round}`, tag: "AI", cls: "ai", text: `${payload.summary} ${payload.information_requests.length} questions.` }
+        : { title: "AI review unavailable", tag: "AI", cls: "bad", text: payload.reason };
+    case "assessment_recorded":
+      return { title: "Rules and evidence checked", tag: "H0.2–H0.5", text: `${payload.deficiencies.length} open items, ${payload.issues.length} escalations${payload.withdrawn_flags.length ? `, ${payload.withdrawn_flags.length} AI flags withdrawn` : ""}` };
+    case "plan_recorded":
+      return { title: "Next step determined", tag: "H0.6–H0.7", text: payload.next_action ? `${label("action", payload.next_action)}${payload.held ? " (on hold)" : ""}` : "No further action" };
+    case "evidence_registered":
+      return { title: "Information added", cls: "ok", text: payload.description || `${subject(payload.type)}, version ${payload.version}` };
+    case "action_executed":
+      return { title: `Action performed: ${label("action", payload.action)}`, tag: "H0.8", cls: "ok", text: `By ${payload.actor_id === "repermit" ? "the system" : label("role", payload.role)}` };
+    case "action_denied":
+      return { title: `Action refused: ${label("action", payload.action)}`, tag: "E4", cls: "bad", text: `${label("role", payload.role)}: ${label("reason", payload.reason)}` };
+    case "stage_reversed":
+      return { title: "Case moved back after new information", tag: "E5", cls: "bad", text: `Back to ${label("stage", payload.to_stage)}` };
+    case "issue_resolved":
+      return { title: "Escalation resolved", cls: "ok", text: `${payload.decision} (${payload.source})` };
+    case "resolution_denied":
+      return { title: "Resolution refused", cls: "bad", text: label("role", payload.role) };
+    default:
+      return { title: event.type, text: "" };
+  }
+}
+
+function flowPanel() {
+  const total = state.history.length;
+  const current = state.at || total;
+  return el("section", { class: "panel" },
+    el("div", { class: "case-head" }, el("h2", {}, "Flow of this case"),
+      el("div", { class: "controls" },
+        el("button", { disabled: current <= 1, onclick: () => { stopPlaying(); showStep(current - 1); } }, "Previous"),
+        el("span", { class: "muted" }, `Step ${current} of ${total}`),
+        el("button", { disabled: current >= total, onclick: () => { stopPlaying(); showStep(current + 1); } }, "Next"),
+        el("button", { onclick: togglePlay }, state.timer ? "Pause" : "Play"),
+        el("button", { disabled: !state.at, onclick: () => { stopPlaying(); showStep(total); } }, "Go to now"))),
+    el("ol", { class: "timeline" }, state.history.map((event) => {
+      const info = describeEvent(event);
+      const position = event.seq > current ? "future" : event.seq === current ? "current" : "";
+      return el("li", { class: `${position} ${info.cls || ""}` }, el("button", { onclick: () => { stopPlaying(); showStep(event.seq); } },
+        el("div", {}, el("span", { class: "step-title" }, `${event.seq}. ${info.title}`), " ", info.tag ? badge(info.tag, info.cls === "ai" ? "ai" : "") : null),
+        info.text ? el("div", { class: "muted" }, info.text) : null));
+    })));
+}
+
+function evidencePanel(view) {
+  const impact = Object.fromEntries(((view.assessment && view.assessment.impact) || []).map((item) => [item.evidence_id, item.impact]));
+  return el("section", { class: "panel" }, el("h2", {}, "Case file"),
+    el("div", { style: "overflow-x:auto" }, el("table", {},
+      el("thead", {}, el("tr", {}, ["Item", "Domain", "Revision", "Version", "Content", "Effect"].map((text) => el("th", {}, text)))),
+      el("tbody", {}, view.evidence.map((item) => el("tr", {},
+        el("td", {}, subject(item.type)),
+        el("td", {}, label("domain", item.domain)),
+        el("td", {}, item.revision || "Unknown"),
+        el("td", {}, String(item.version)),
+        el("td", { class: "muted" }, item.description || Object.entries(item.facts).map(([key, value]) => `${key}: ${value}`).join(", ") || (item.format ? item.format.toUpperCase() : "")),
+        el("td", {}, impact[item.evidence_id] ? badge(label("impact", impact[item.evidence_id])) : "–")))))));
+}
+
+function ownDialog() {
+  const project = el("input", { value: "Own request" });
+  const description = el("textarea", { rows: 4, placeholder: "Describe the design modification in your own words." });
+  const dialog = $("dialog");
+  dialog.replaceChildren(el("form", { method: "dialog" },
+    el("h2", {}, "Submit your own request"),
+    el("p", { class: "muted" }, "Claude classifies and reviews your text. It is sent to the Anthropic API and takes up to a minute."),
+    el("label", {}, "Project", project),
+    el("label", {}, "Modification", description),
+    el("div", { class: "row" },
+      el("button", { value: "cancel" }, "Cancel"),
+      el("button", {
+        class: "primary",
+        onclick: (event) => {
+          event.preventDefault();
+          if (!description.value.trim()) return;
+          run(event.currentTarget, "Claude is reviewing…", async () => {
+            const created = await api("/cases", "POST", { project_name: `[SYNTHETIC] ${project.value}`, revision: "A", responsible_role: "consultant" });
+            await api(`/cases/${created.case_id}/modifications`, "POST", { revision: "B", description: description.value.trim() });
+            dialog.close();
+            await openCase(created.case_id);
+          });
+        },
+      }, "Submit"))));
+  dialog.showModal();
+}
+
+async function start() {
+  state.meta = await api("/meta");
+  $("role").replaceChildren(...state.meta.roles.map((role) => el("option", { value: role }, label("role", role))));
+  $("role").addEventListener("change", (event) => { state.role = event.target.value; if (state.view) render(); });
+  $("own").addEventListener("click", ownDialog);
+  $("own").hidden = !state.meta.llm_enabled;
+  $("notice").textContent = `Demonstration: AI cases use rules derived from public sources (${state.meta.pack_version}), and fixed test cases use synthetic rules. Neither is official or complete Dubai Municipality/BPS logic. Roles are simulated and documents are fictional. RePermit does not issue permits or replace a competent authority's decision.`;
+  $("scenarios").replaceChildren(...(await api("/demo/scenarios")).map(scenarioRow));
+  state.caseId = location.hash.slice(1) || null;
+  await refresh();
+}
+
+start().catch((error) => toast(error.message));
+</script>
+</body>
+</html>

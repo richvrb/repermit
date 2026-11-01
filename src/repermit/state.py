@@ -1,0 +1,81 @@
+"""Case state, derived by folding the event history."""
+
+from dataclasses import dataclass, field
+
+from repermit.knowledge import LEGACY_PACK_VERSION
+
+
+@dataclass
+class CaseState:
+    case_id: str
+    seq: int = 0
+    project_name: str = ""
+    permit_type: str = ""
+    pack_version: str = LEGACY_PACK_VERSION
+    responsible_role: str = ""
+    revision: str = ""
+    stage: str = ""
+    base_revision: str = ""
+    scenario: str | None = None
+    review_rounds: int = 0
+    modification: dict | None = None
+    evidence: dict[str, list[dict]] = field(default_factory=dict)
+    resolutions: dict[str, dict] = field(default_factory=dict)
+    assessment: dict | None = None
+    llm_review: dict | None = None
+    basis_fingerprint: str | None = None
+    last_action: str | None = None
+    auto_denied_action: str | None = None
+
+    def apply(self, event: dict) -> None:
+        self.seq = event["seq"]
+        payload = event["payload"]
+        match event["type"]:
+            case "case_opened":
+                self.project_name = payload["project_name"]
+                self.permit_type = payload["permit_type"]
+                self.pack_version = payload.get("pack_version", LEGACY_PACK_VERSION)
+                self.responsible_role = payload["responsible_role"]
+                self.revision = payload["revision"]
+                self.base_revision = payload["revision"]
+                self.scenario = payload.get("scenario")
+                self.stage = payload["stage"]
+            case "modification_submitted":
+                self.modification = dict(payload)
+                self.revision = payload["revision"]
+                self.llm_review = None
+                self.review_rounds = 0
+            case "llm_review_recorded":
+                self.llm_review = payload
+                self.review_rounds += payload["status"] == "completed"
+                if self.modification["change_type_source"] == "llm":
+                    self.modification["change_type"] = payload["effective_change_type"]
+            case "evidence_registered":
+                self.evidence.setdefault(payload["evidence_id"], []).append(payload)
+            case "issue_resolved":
+                self.resolutions[payload["issue_id"]] = payload
+            case "assessment_recorded":
+                self.assessment = payload
+            case "action_executed":
+                self.stage = payload["to_stage"]
+                self.basis_fingerprint = payload["basis_fingerprint"]
+                self.last_action = payload["action"]
+                self.auto_denied_action = None
+            case "action_denied":
+                # A denial is history only; the stage is deliberately untouched (BR-06).
+                if payload["automatic"]:
+                    self.auto_denied_action = payload["action"]
+            case "stage_reversed":
+                self.stage = payload["to_stage"]
+                self.basis_fingerprint = None
+                self.last_action = None
+
+    def latest_evidence(self) -> list[dict]:
+        return [versions[-1] for versions in self.evidence.values()]
+
+
+def fold(case_id: str, events: list[dict]) -> CaseState:
+    state = CaseState(case_id)
+    for event in events:
+        state.apply(event)
+    return state
