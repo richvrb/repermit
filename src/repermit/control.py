@@ -22,11 +22,13 @@ def plan(state: CaseState, pack: Pack) -> dict:
     action = pack.action_from(state.stage)
     assessment = state.assessment
     if assessment is None or action is None:
-        return {"next_action": None, "autonomy": None, "held": False, "hold_reasons": []}
+        return {"next_action": None, "roles": [], "to_stage": None, "autonomy": None, "held": False, "hold_reasons": []}
     reasons = [f"{d['code']}: {d['subject']}" for d in assessment["deficiencies"]]
     reasons += [f"{issue['kind']}: {issue['id']}" for issue in assessment["issues"]]
     return {
         "next_action": action.id,
+        "roles": action.roles,
+        "to_stage": action.to_stage,
         "autonomy": evaluate_autonomy(action, assessment, pack),
         "held": bool(reasons),
         "hold_reasons": reasons,

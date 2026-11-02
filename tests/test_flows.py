@@ -68,7 +68,14 @@ def test_t0_to_t5_event_sequence(api):
     case = api.evidence("fs-1", "fire_strategy", "fire_safety", revision="B")
     assert case["stage"] == "package_prepared"
     assert case["status"] == "awaiting_review"
-    assert case["plan"] == {"next_action": "submit_for_review", "autonomy": "human_review", "held": False, "hold_reasons": []}
+    assert case["plan"] == {
+        "next_action": "submit_for_review",
+        "roles": ["consultant", "coordinator"],
+        "to_stage": "under_review",
+        "autonomy": "human_review",
+        "held": False,
+        "hold_reasons": [],
+    }
 
 
 def test_e1_missing_evidence_holds_then_resumes(api):

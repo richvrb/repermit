@@ -90,6 +90,14 @@ ol.timeline li.current button { background: var(--info-bg); }
 ol.timeline li.ai { border-left-color: var(--ai); }
 ol.timeline li.bad { border-left-color: var(--bad); }
 ol.timeline li.ok { border-left-color: var(--ok); }
+ol.timeline details { margin: 0 8px 8px; }
+ol.timeline details summary { cursor: pointer; font-size: 13px; }
+dl.basis { margin: 6px 0 0; display: grid; grid-template-columns: minmax(120px, 180px) 1fr; gap: 4px 12px; font-size: 13px; }
+dl.basis dt { font-weight: 600; }
+dl.basis dd { margin: 0; }
+dl.basis ul { margin: 0; padding-left: 18px; }
+dl.basis ul li { border-left: 0; padding-left: 0; margin: 0 0 2px; }
+@media (max-width: 640px) { dl.basis { grid-template-columns: 1fr; } }
 .step-title { font-weight: 600; }
 .controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .empty { padding: 48px 16px; text-align: center; color: var(--muted); }
@@ -138,10 +146,15 @@ const LABELS = {
   status: { open: "Open", pending_evidence: "Waiting for information", escalated: "Escalated", awaiting_review: "Waiting for review", ready: "Ready", completed: "Completed" },
   statusClass: { open: "", pending_evidence: "warn", escalated: "bad", awaiting_review: "info", ready: "info", completed: "ok" },
   stage: { design_change: "Design change", package_prepared: "Package prepared", under_review: "Under review", approved_simulated: "Approved (simulated)" },
-  domain: { architectural: "Architecture", structural: "Structure", fire_safety: "Fire safety", general: "General", permitting: "Permitting", planning: "Planning", heritage: "Heritage" },
+  domain: { architectural: "Architecture", structural: "Structure", fire_safety: "Fire safety", general: "General", permitting: "Permitting", planning: "Planning", heritage: "Heritage", property: "Property" },
   domainStatus: { affected: "Affected", potentially_affected: "Potentially affected", not_affected: "Not affected" },
   domainClass: { affected: "bad", potentially_affected: "warn", not_affected: "ok" },
   action: { prepare_review_package: "Prepare review package", submit_for_review: "Submit for review", approve_modification: "Approve modification" },
+  actionHelp: {
+    prepare_review_package: "Bundles the design change and its evidence into a review package. This is not a permit decision.",
+    submit_for_review: "Sends the package to the authority for review.",
+    approve_modification: "The authority approves the modification. In this demo the approval is simulated.",
+  },
   autonomy: { autonomous: "May run automatically", human_review: "Human review required", human_only: "Humans only" },
   role: { consultant: "Consultant", coordinator: "Coordinator", authority: "Authority", observer: "Observer" },
   issue: { rule_conflict: "Rules contradict each other", process_gap: "Process gap", retrieval_gap: "Not covered by the rules", llm_flag: "AI sees a risk outside the rules", llm_unavailable: "AI review unavailable" },
@@ -203,7 +216,7 @@ function toast(message, ok = false) {
 }
 
 const emptyDraft = () => ({ facts: {}, answers: {}, documents: {}, note: "" });
-const state = { page: "cases", tab: "overview", afterRoute: null, draft: emptyDraft(), meta: null, role: "consultant", cases: [], caseId: null, view: null, latest: null, history: [], at: null, timer: null };
+const state = { page: "cases", tab: "overview", afterRoute: null, draft: emptyDraft(), meta: null, ruleUrls: {}, role: "consultant", cases: [], caseId: null, view: null, latest: null, history: [], at: null, timer: null };
 
 async function run(button, text, work) {
   const original = [...button.childNodes];
@@ -411,18 +424,26 @@ function nextStepPanel(view, readOnly) {
     panel.append(el("p", {}, view.status === "completed" ? "The process is complete." : "There is no next action."));
     return panel;
   }
+  const roles = plan.roles || [];
+  const allowed = roles.includes(state.role);
   panel.append(el("p", {}, el("strong", {}, label("action", plan.next_action))),
+    el("p", {}, LABELS.actionHelp[plan.next_action] || "", plan.to_stage ? ` The case then moves to ${label("stage", plan.to_stage)}.` : ""),
+    el("p", {}, "Who may do this: ", roles.map((role) => label("role", role)).join(" or ") || "–"),
     el("p", {}, badge(label("autonomy", plan.autonomy), "info"), " ", plan.held ? badge("On hold", "warn") : badge("Not blocked", "ok")));
   if (plan.held) panel.append(el("p", { class: "muted" }, "This step waits until the open items below are resolved."));
   if (!readOnly) {
+    const refusal = !allowed ? `you act as ${label("role", state.role)}, which may not do this` : plan.held ? "the step is on hold" : null;
+    if (refusal) {
+      panel.append(el("p", { class: "muted" }, `Not possible now: ${refusal}.${!allowed ? ` Choose ${roles.map((role) => label("role", role)).join(" or ")} under Acting as, top right.` : ""}`));
+    }
     panel.append(el("p", {}, el("button", {
-      class: "primary",
+      class: refusal ? "" : "primary",
       onclick: (event) => run(event.currentTarget, "Working…", async () => {
         await api(`/cases/${view.case_id}/actions`, "POST", { action: plan.next_action, actor_id: "demo-user", role: state.role });
         toast("Action performed.", true);
         await refresh();
       }),
-    }, `Perform as ${label("role", state.role)}`)));
+    }, refusal ? `Try anyway as ${label("role", state.role)} (refusal is recorded)` : `${label("action", plan.next_action)} as ${label("role", state.role)}`)));
   }
   return panel;
 }
@@ -767,6 +788,137 @@ function describeEvent(event) {
   }
 }
 
+// Who took the step: the AI only advises, the rules engine decides, and people act under their role.
+function decider(event) {
+  const payload = event.payload;
+  const person = (role) => ({ who: `Person: ${label("role", role)}`, cls: "" });
+  switch (event.type) {
+    case "case_opened":
+      return person(payload.responsible_role);
+    case "modification_submitted":
+    case "evidence_registered":
+      return { who: "Applicant", cls: "" };
+    case "llm_review_recorded":
+      return { who: "AI (advisory)", cls: "ai", why: "The AI advises. Its findings only count once the rules engine or a reviewer takes them over." };
+    case "assessment_recorded": {
+      const usedAi = payload.llm_review || payload.deficiencies.some((item) => item.code === "ai_question") || payload.issues.some((item) => item.kind === "llm_flag");
+      return { who: usedAi ? "Rules engine, with AI input" : "Rules engine", cls: "info", why: `Decided by the rules in pack ${payload.pack_version}${usedAi ? ". Items marked AI come from the AI review" : ""}.` };
+    }
+    case "plan_recorded":
+    case "stage_reversed":
+      return { who: "Rules engine", cls: "info", why: `Decided by the process rules in pack ${state.latest ? state.latest.pack_version : "of this case"}.` };
+    case "action_denied":
+      return { who: "Rules engine", cls: "info", why: "The permission and process rules refused this request." };
+    case "action_executed":
+      return payload.actor_id === "repermit"
+        ? { who: "System (automatic)", cls: "info", why: "The rules allow this action to run without a person." }
+        : person(payload.role);
+    default:
+      return payload.role ? person(payload.role) : null;
+  }
+}
+
+// What each step was based on, from its recorded payload. Rows without content are left out.
+function stepBasis(event) {
+  const payload = event.payload;
+  const list = (items) => (items.length ? el("ul", {}, items.map((item) => el("li", {}, item))) : null);
+  const facts = (values) => list(Object.entries(values || {}).map(([name, value]) => `${subject(name)}: ${value}`));
+  const fromAi = () => [" ", badge("AI", "ai")];
+  const rows = [];
+  const add = (name, content) => { if (content != null && content !== "" && !(Array.isArray(content) && !content.length)) rows.push([name, content]); };
+  const who = decider(event);
+  if (who) add("Decided by", who.why ? [who.who, el("div", { class: "muted" }, who.why)] : who.who);
+  switch (event.type) {
+    case "case_opened":
+      add("Rule pack", payload.pack_version);
+      add("Permit type", payload.permit_type === "new_permit" ? "New permit" : "Modification");
+      add("Responsible role", label("role", payload.responsible_role));
+      break;
+    case "modification_submitted":
+      add("Change type", payload.change_type ? `${payload.change_type} (given by the applicant)` : "Left to the AI to classify");
+      add("Facts stated", facts(payload.facts));
+      break;
+    case "llm_review_recorded":
+      if (payload.status !== "completed") { add("Reason", payload.reason); break; }
+      add("Classification", `${payload.effective_change_type || payload.change_type}, confidence ${payload.confidence}, ${payload.materiality.replace("_", " ")}`);
+      add("Domains", list(payload.domains.map((item) => `${label("domain", item.domain)}: ${label("domainStatus", item.status)}. ${item.rationale}`)));
+      add("Information requested", list(payload.information_requests.map((item) => `${item.question}${item.document ? ` Document: ${subject(item.document)}.` : ""} Why: ${item.reason}`)));
+      add("Proposed facts", list(payload.proposed_facts.map((item) => `${subject(item.name)}: ${item.value}. Basis: ${item.basis}`)));
+      add("Documents assessed", list((payload.document_verdicts || []).map((item) => `${subject(item.type)}: ${item.status}${item.missing && item.missing.length ? `, missing: ${item.missing.join("; ")}` : ""}`)));
+      add("Uncertainties", list(payload.uncertainties));
+      add("Model", payload.model);
+      {
+        const sources = Object.fromEntries((payload.sources || []).map((item) => [item.id, item]));
+        const cited = (payload.citations || []).filter((item) => sources[item.passage_id]);
+        add("Sources relied on", list(cited.map((item) => {
+          const source = sources[item.passage_id];
+          return [sourceLink(source.reference, source.url), " ", badge(source.source === "CARDS" ? "Unverified card" : "Unverified extract", "warn"), el("div", { class: "muted" }, item.claim)];
+        })));
+        const unused = (payload.sources || []).length - cited.length;
+        add("Sources consulted", (payload.sources || []).length ? `${(payload.sources || []).length} ${(payload.sources || []).length === 1 ? "passage" : "passages"} retrieved, ${cited.length} relied on${unused ? `, ${unused} not used` : ""}` : "No passages retrieved");
+        if ((payload.invalid_citations || []).length) add("Citations removed", `${payload.invalid_citations.length} citations of passages that were not provided`);
+      }
+      break;
+    case "assessment_recorded":
+      add("Rule pack and revision", `${payload.pack_version}, revision ${payload.revision}`);
+      add("Domains", list(Object.entries(payload.domains).map(([name, status]) => `${label("domain", name)}: ${label("domainStatus", status)}`)));
+      if (payload.llm_review && payload.llm_review.effective_change_type) add("Change type used", [payload.llm_review.effective_change_type, ...fromAi(), el("div", { class: "muted" }, "Classified by the AI because the applicant left it open.")]);
+      add("Rules applied", list(payload.applied_rules.map((rule) => [
+        `${rule.rule}${rule.title ? ` ${rule.title}` : ""}`,
+        el("div", { class: "muted" }, sourceLink(rule.reference || rule.source_title || rule.source, state.ruleUrls[rule.rule]), rule.reference && rule.source_title ? `, ${rule.source_title}` : "", ` (${rule.source_kind})`),
+      ])));
+      add("Evidence considered", list(Object.entries(payload.basis.evidence).map(([id, version]) => `${id}, version ${version}`)));
+      add("Open items", list(payload.deficiencies.map((item) => [`${label("deficiency", item.code)}: ${item.detail || subject(item.subject)}`, ...(item.code === "ai_question" ? fromAi() : [])])));
+      add("Escalations", list(payload.issues.map((item) => [`${label("issue", item.kind)}: ${item.detail}${item.rules && item.rules.length ? ` (${item.rules.join(", ")})` : ""}`, ...(item.kind === "llm_flag" ? fromAi() : [])])));
+      add("AI flags withdrawn", list(payload.withdrawn_flags));
+      if (!payload.deficiencies.length && !payload.issues.length) add("Outcome", "All required information is present and no rule conflicts were found.");
+      break;
+    case "plan_recorded":
+      add("Next action", payload.next_action ? label("action", payload.next_action) : "None: the process is finished");
+      add("Roles allowed", (payload.roles || []).map((role) => label("role", role)).join(" or "));
+      add("Automation", payload.autonomy ? label("autonomy", payload.autonomy) : null);
+      add("On hold because", list(payload.hold_reasons || []));
+      break;
+    case "evidence_registered":
+      add("Item", `${subject(payload.type)} (${payload.category}), version ${payload.version}`);
+      add("Domain", label("domain", payload.domain));
+      add("Revision", payload.revision || "Unknown");
+      add("Status", payload.status);
+      add("Valid until", payload.valid_until);
+      add("Facts it states", facts(payload.facts));
+      break;
+    case "action_executed":
+      add("Stage", `${label("stage", payload.from_stage)} → ${label("stage", payload.to_stage)}`);
+      if (payload.actor_id !== "repermit") add("Actor", payload.actor_id);
+      add("Based on assessment", payload.basis_fingerprint ? `fingerprint ${payload.basis_fingerprint.slice(0, 12)}…` : null);
+      break;
+    case "action_denied":
+      add("Requested by", `${payload.actor_id} as ${label("role", payload.role)}`);
+      add("Refused because", label("reason", payload.reason));
+      break;
+    case "stage_reversed":
+      add("Stage", `${label("stage", payload.from_stage)} → ${label("stage", payload.to_stage)}`);
+      add("Reason", payload.reason);
+      break;
+    case "issue_resolved":
+    case "resolution_denied":
+      add("Escalation", payload.issue_id);
+      add("Actor", payload.actor_id);
+      add("Decision", payload.decision);
+      add("Source", payload.source);
+      add("Rule chosen", payload.selected_rule_id);
+      break;
+    case "fact_declined":
+      add("Fact", subject(payload.name));
+      add("From document", payload.evidence_id);
+      add("Declined by", `${payload.actor_id} as ${label("role", payload.role)}`);
+      break;
+  }
+  if (!rows.length) return null;
+  return el("details", {}, el("summary", { class: "muted" }, "Basis for this step"),
+    el("dl", { class: "basis" }, rows.flatMap(([name, content]) => [el("dt", {}, name), el("dd", {}, content)])));
+}
+
 function flowPanel() {
   const total = state.history.length;
   const current = state.at || total;
@@ -780,10 +932,13 @@ function flowPanel() {
         el("button", { disabled: !state.at, onclick: () => { stopPlaying(); showStep(total); } }, "Go to now"))),
     el("ol", { class: "timeline" }, state.history.map((event) => {
       const info = describeEvent(event);
+      const who = decider(event);
       const position = event.seq > current ? "future" : event.seq === current ? "current" : "";
       return el("li", { class: `${position} ${info.cls || ""}` }, el("button", { onclick: () => { stopPlaying(); showStep(event.seq); } },
-        el("div", {}, el("span", { class: "step-title" }, `${event.seq}. ${info.title}`), " ", info.tag ? badge(info.tag, info.cls === "ai" ? "ai" : "") : null),
-        info.text ? el("div", { class: "muted" }, info.text) : null));
+        el("div", {}, el("span", { class: "step-title" }, `${event.seq}. ${info.title}`), " ", info.tag ? badge(info.tag, info.cls === "ai" ? "ai" : "") : null,
+          who ? [" ", badge(who.who, who.cls)] : null),
+        info.text ? el("div", { class: "muted" }, info.text) : null),
+        stepBasis(event));
     })));
 }
 
@@ -830,6 +985,8 @@ function ownDialog() {
 
 async function start() {
   state.meta = await api("/meta");
+  // Rule id to source URL, so the flow can link each applied rule to its article.
+  state.ruleUrls = Object.fromEntries((await api("/knowledge")).rules.map((rule) => [rule.id, rule.source_url]));
   $("role").replaceChildren(...state.meta.roles.map((role) => el("option", { value: role }, label("role", role))));
   $("role").addEventListener("change", (event) => { state.role = event.target.value; if (state.view && state.page === "cases") render(); });
   $("own").addEventListener("click", ownDialog);
