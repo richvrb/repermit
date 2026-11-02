@@ -58,7 +58,7 @@ docker compose exec api python -m repermit.demo --llm
 On a Linux server with Docker, clone the repository, create `.env` and add:
 
 ```sh
-REPERMIT_HOST=203-0-113-10.sslip.io   # the server IP with dashes; sslip.io gives it a name for HTTPS
+REPERMIT_HOST=203-0-113-10.nip.io     # the server IP with dashes; nip.io gives it a name for HTTPS
 REPERMIT_USER=demo
 REPERMIT_PASSWORD_HASH='...'          # docker run --rm caddy:2.10-alpine caddy hash-password -p 'your password'
 ```
