@@ -16,6 +16,7 @@ dependencies = [
     "pydantic>=2.8,<3",
     "anthropic>=2.3,<3",
     "ifcopenshell>=0.9,<1",
+    "pypdf>=5,<7",
 ]
 
 [project.optional-dependencies]

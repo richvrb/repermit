@@ -3,6 +3,7 @@
 GUIDs are stable, so a baseline and a proposal can be compared.
 """
 
+import textwrap
 import uuid
 from functools import lru_cache
 
@@ -10,6 +11,7 @@ import ifcopenshell
 import ifcopenshell.api
 import ifcopenshell.guid
 
+from repermit.knowledge import PUBLIC_PACK, load_pack
 from repermit.service import UnknownItem
 
 PARTITION = {"LoadBearing": False, "FireRating": "NONE", "IsExternal": False}
@@ -269,3 +271,80 @@ def sample_model(scenario_id: str, kind: str) -> bytes:
         return build_model(building())
     changed, removed = PROPOSALS[scenario_id]
     return build_model({**{name: item for name, item in building().items() if name not in removed}, **changed()})
+
+
+# What each test case's documents say. Yes or no per fact, for the consultant statement.
+BASE_FACTS = {
+    "load_bearing": False, "fire_compartment_boundary": False, "safety_systems_changed": False, "affects_egress": False,
+    "decoration_works": False, "non_residential_unit": True, "in_commercial_centre": False, "unit_over_100m2": False,
+    "changes_unit_boundary": False, "heritage_area": False, "facade_change": False, "historical_building": False,
+    "relies_on_existing_building": False, "exceeds_zoning": False, "simple_maintenance": False, "planning_use_change": False,
+}
+CASE_DOCUMENTS = {
+    "llm_renovation_floors": ({"decoration_works": True}, "The lobby is not an escape route. Tiles are non-combustible A1 and plaster A2-s1,d0."),
+    "llm_office_fit_out": ({"decoration_works": True, "unit_over_100m2": True}, "All work stays inside unit 1204. Sprinklers and detectors move within the unit only, and no shared system changes."),
+    "llm_free_text": ({"load_bearing": True, "fire_compartment_boundary": True, "changes_unit_boundary": True, "non_residential_unit": False}, "Apartments 4A and 4B have one owner. All added area comes from 4B and the corridor width is unchanged. A new load-bearing EI60 wall replaces the old one."),
+    "llm_lobby_reconfiguration": ({"load_bearing": True, "fire_compartment_boundary": True, "affects_egress": True}, "The building stays occupied. Upper floors use stair B during the works. The old exit is closed with EI120 construction and the new door is EI120, self-closing, discharging directly outside."),
+    "llm_office_to_residential": ({"fire_compartment_boundary": True, "exceeds_zoning": True, "planning_use_change": True}, "Floors 5 to 7 hold 18 apartments separated by EI60 walls. The building has one owner. Stairs, lifts and sanitary risers are covered by the impacted area assessment."),
+    "llm_out_of_scope": ({"load_bearing": True, "fire_compartment_boundary": True, "relies_on_existing_building": True, "facade_change": True}, "The rooftop room is a 40 m2 office with an enclosed EI60 stair. The building has one owner. Calculations cover the added load."),
+    "llm_edge_floor_ceiling": ({}, "The two meeting rooms open directly onto the main office. Sprinklers and detectors are moved inside the unit only."),
+    "llm_edge_terrace": ({"facade_change": True, "exceeds_zoning": True}, "The terrace is not an exit route and holds seating only, with no cooking. Alarm coverage extends from the restaurant's own zone and the owner of the restaurant unit owns the whole building."),
+}
+
+
+def pdf_escape(line: str) -> str:
+    return line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def simple_pdf(lines: list[str]) -> bytes:
+    """A small text PDF, without another dependency."""
+    wrapped = [piece for line in lines for piece in (textwrap.wrap(line, 90) or [""])]
+    pages = [wrapped[index:index + 48] for index in range(0, len(wrapped), 48)]
+    objects = ["<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    kids = []
+    for page in pages:
+        body = "BT /F1 11 Tf 50 790 Td 15 TL " + " ".join(f"({pdf_escape(line)}) Tj T*" for line in page) + " ET"
+        objects.append(f"<< /Length {len(body)} >>\nstream\n{body}\nendstream")
+        objects.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents {len(objects)} 0 R >>")
+        kids.append(f"{len(objects)} 0 R")
+    objects[1] = f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {len(kids)} >>"
+    output, offsets = b"%PDF-1.4\n", []
+    for number, item in enumerate(objects, 1):
+        offsets.append(len(output))
+        output += f"{number} 0 obj\n{item}\nendobj\n".encode("latin-1", "replace")
+    start = len(output)
+    table = "".join(f"{offset:010} 00000 n \n" for offset in offsets)
+    output += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n{table}trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{start}\n%%EOF\n".encode()
+    return output
+
+
+def sample_document(scenario_id: str, document_type: str, incomplete: bool = False) -> bytes:
+    pack = load_pack(PUBLIC_PACK)
+    if scenario_id not in CASE_DOCUMENTS or document_type not in pack.documents:
+        raise UnknownItem(f"no {document_type} sample for {scenario_id}")
+    facts, narrative = CASE_DOCUMENTS[scenario_id]
+    items = pack.documents[document_type].must_contain[:-1 if incomplete else None]
+    values = {
+        "Project and unit identification": "Tower 7, Dubai, the unit concerned by this case",
+        "Project and plot identification": "Tower 7, plot 7-001, Dubai",
+        "Design revision": "Revision B",
+        "Name and licence of the consultant": "Atlas Consulting Engineers, licence 7788",
+        "Name of the owner": "Tower 7 Holdings",
+        "Date and signature or stamp": "1 October 2026, signed and stamped by the consultant",
+        "Date and signature": "1 October 2026, signed by the authorised person",
+        "Issuing authority": "the competent authority",
+        "Reference number and date": "Reference 2026-1187, 1 October 2026",
+        "Consultant's stamp": "Stamped by Atlas Consulting Engineers",
+    }
+    lines = ["[SYNTHETIC DEMONSTRATION DOCUMENT]", pack.labels.get(document_type, document_type.replace("_", " ").title()), ""]
+    lines += [f"{item}: {values.get(item, 'As set out for this case in revision B of Tower 7.')}" for item in items if item != "Consultant's statement on each listed subject"]
+    if document_type == "consultant_statement" and not incomplete:
+        lines += ["", "Consultant's statement on each listed subject:"]
+        lines += [f"{name}: {'yes' if {**BASE_FACTS, **facts}[name] else 'no'}" for name in BASE_FACTS]
+    if document_type == "completion_certificate":
+        lines.append("A completion certificate has been issued for this building: yes")
+    for name in pack.documents[document_type].proves if document_type != "consultant_statement" else []:
+        lines.append(f"{name}: {'yes' if {**BASE_FACTS, **facts}.get(name, True) else 'no'}")
+    if document_type in ("supporting_document", "consultant_statement"):
+        lines += ["", narrative]
+    return simple_pdf(lines)

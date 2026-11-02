@@ -1,0 +1,73 @@
+# Paraphrases for sources that are Arabic-only or could not be indexed. Written from the source report.
+# None of these has been confirmed by an expert or against the Arabic text.
+cards:
+  - id: RES65-ART4
+    jurisdiction: dm
+    reference: Executive Council Resolution 65/2022, new art. 4 of Local Order 3/1999
+    url: https://dlp.dubai.gov.ae/Legislation%20Ar%20Reference/2022/
+    text: Under the replaced article 4 of Local Order 3/1999, construction work and changes to a property require a permit. The Director General can exempt works by decision. The older English text of article 4 is out of date.
+  - id: RES65-ART8
+    jurisdiction: dm
+    reference: Executive Council Resolution 65/2022, new art. 8 of Local Order 3/1999
+    url: https://dlp.dubai.gov.ae/Legislation%20Ar%20Reference/2022/
+    text: A permit is valid for one year, including a permit for additions or modifications to a building.
+  - id: LAW6-WALL
+    jurisdiction: all
+    reference: Law 6/2019, art. 9(e)
+    url: https://dlp.dubai.gov.ae/Legislation%20Reference/2019/Law%20No.%20(6)%20of%202019%20Concerning%20Ownership%20of%20Jointly%20Owned%20Real%20Property%20in%20the%20Emirate%20of%20Dubai.html
+    text: A dividing wall between two adjacent units in jointly owned property is shared by the owners of both units. Moving such a wall therefore involves the second owner, although no text literally requires an NOC from that owner. A structural wall can be a Common Part under art. 7 and art. 17.
+  - id: LAW6-ALTERATIONS
+    jurisdiction: all
+    reference: Law 6/2019, art. 39(a)
+    url: https://dlp.dubai.gov.ae/Legislation%20Reference/2019/Law%20No.%20(6)%20of%202019%20Concerning%20Ownership%20of%20Jointly%20Owned%20Real%20Property%20in%20the%20Emirate%20of%20Dubai.html
+    text: Substantial alterations to jointly owned property need approval from the Master Developer, the Dubai Land Department and the Competent Authority. The law does not define substantial alterations in the parts read.
+  - id: DLD-MERGE
+    jurisdiction: all
+    reference: Dubai Land Department FAQ
+    url: https://dubailand.gov.ae/en/frequently-asked-questions/
+    text: Merging or splitting units needs an NOC from the developer or property manager, a plan and an engineering file. A boundary shift is not a merger or split, so this is only the closest analogy.
+  - id: LAW4-NOTIFY
+    jurisdiction: all
+    reference: Law 4/2025, art. 17(4)
+    url: https://dlp.dubai.gov.ae/Legislation%20Reference/2025/Law%20No.%20(4)%20of%202025%20Establishing%20the%20Dubai%20Civil%20Defence%20General%20Command.pdf
+    text: Owners must notify Civil Defence and obtain approval for any modification that may affect preventive safety requirements. Art. 19(c) prohibits changing safety systems, and art. 16(a) makes a valid Civil Defence certificate a precondition for permits.
+  - id: BIM-MODIFICATION
+    jurisdiction: dm
+    reference: Circular 9-1-3 of 2026, Part II
+    url: https://dmpmedia.dm.gov.ae/uploads/2026/02/Circular-9-1-3.pdf
+    text: The BIM duty for modifications covers only buildings previously licensed using BIM. A model must accompany the application for five major changes - adding or removing floors, adding 1,500 m2 or more, a full redesign, a change of main use, or moving the building on the plot. Other modifications need a final model before the completion certificate.
+  - id: BIM-NEW
+    jurisdiction: dm
+    reference: Circulars 9-1-2 of 2023 and 9-1-3 of 2026
+    url: https://dmpmedia.dm.gov.ae/uploads/2026/02/Circular-9-1-3.pdf
+    text: From 1 April 2026 new buildings above G+12, or with 15,000 m2 built area or more, are subject to BIM for architectural and structural design. Circular 9-1-2 requires Open BIM under the Dubai standards. Neither circular names IFC; only the BIM Standard does.
+  - id: AR225-SMALL-PLOTS
+    jurisdiction: all
+    reference: Administrative Resolution 225/2024
+    url: https://www.dm.gov.ae/documents/administrative-resolution-no-225-of-2024-regarding-amending-some-building-specifications-in-the-dubai-building-code/
+    text: This resolution relaxes seven Dubai Building Code parameters, only for plots of 250 m2 or less - lifts, lobby and corridor width, shop toilets, waste rooms and parking width. It is read together with the code.
+  - id: AR109-MAINTENANCE
+    jurisdiction: dm
+    reference: Administrative Resolution 109/2022 and Circular 3-12-1
+    url: https://www.dm.gov.ae/documents/decision-administrative-no-109-of-2022-regarding-regulation-business-license-maintenance/
+    text: Maintenance is simple, structural or specialised. Simple maintenance can be exempt. Changing main load-bearing elements needs a permit through a licensed consultant, with drawings, laboratory tests and calculations, as a modification transaction in BPS.
+  - id: REG3-USE
+    jurisdiction: dm
+    reference: Regulation 3/2007 and Administrative Resolution 266/2011
+    url: https://dmpmedia.dm.gov.ae/uploads/2024/12/نظام-رقم-3-لسنة-2007-بشأن-طلبات-التعديل-على-استعمالات-الأراضي-والمباني-في-إمارة-دبي.pdf
+    text: A change to the permitted planning use of a building, or part of it, needs an application and a fee. This planning use test differs from occupancy under the Building Code, so a change can trigger one and not the other.
+  - id: REG10-PARAMETERS
+    jurisdiction: dm
+    reference: Regulation 10/2006 and Administrative Resolution 266/2011
+    url: https://dmpmedia.dm.gov.ae/uploads/2024/12/نظام-رقم-10-لسنة-2006-بشأن-طلبات-التعديل-على-أنظمة-التخطيط-والبناء-في-إمارة-دبي.pdf
+    text: A planning or building parameter can be changed under criteria set by the Director General, with a fee based on the land price and the area gained.
+  - id: AR85-DECORATION
+    jurisdiction: dm
+    reference: Administrative Resolution 85/2019
+    url: https://www.dm.gov.ae/documents/administrative-resolution-no-85-of-2019-concerning-the-licensing-of-decoration-works/
+    text: Decoration work in commercial and similar units over 100 m2 needs a licence and written owner consent, except in commercial centres. It excludes merging or splitting space.
+  - id: FIRE-CODE-GAP
+    jurisdiction: all
+    reference: UAE Fire and Life Safety Code of Practice, September 2018
+    url: ""
+    text: The fire code applies to fire separations, escape routes and fire ratings, but its text is not available in this knowledge base. Fire rating values must come from the code itself or a competent reviewer.

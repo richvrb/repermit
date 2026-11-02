@@ -5,7 +5,10 @@ services:
       REPERMIT_DATABASE_URL: postgresql+psycopg://repermit:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/repermit
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       REPERMIT_LLM_PROVIDER: ${REPERMIT_LLM_PROVIDER:-anthropic}
-      REPERMIT_LLM_MODEL: ${REPERMIT_LLM_MODEL:-claude-opus-5-5}
+      REPERMIT_LLM_MODEL: ${REPERMIT_LLM_MODEL:-claude-sonnet-5-5}
+    volumes:
+      # Full source texts stay out of the image. Build them with: python -m repermit.ingest
+      - ./knowledge:/app/knowledge:ro
     ports:
       # Loopback only: actor roles are simulated, so the API must not be exposed.
       - "127.0.0.1:8000:8000"

@@ -1,0 +1,6 @@
+{$REPERMIT_HOST} {
+	basic_auth {
+		{$REPERMIT_USER} {$REPERMIT_PASSWORD_HASH}
+	}
+	reverse_proxy api:8000
+}

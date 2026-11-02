@@ -1,0 +1,21 @@
+# Server overlay: docker compose -f compose.yaml -f compose.server.yaml up -d --build
+# Caddy serves HTTPS and asks for a password, because the app has no login of its own.
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    environment:
+      REPERMIT_HOST: ${REPERMIT_HOST:?set REPERMIT_HOST in .env}
+      REPERMIT_USER: ${REPERMIT_USER:?set REPERMIT_USER in .env}
+      REPERMIT_PASSWORD_HASH: ${REPERMIT_PASSWORD_HASH:?set REPERMIT_PASSWORD_HASH in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  caddy-data:

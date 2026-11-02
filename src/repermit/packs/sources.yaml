@@ -1,0 +1,127 @@
+# Source register for retrieval. See reports/Bronnen RePermit kennisbank Dubai.md.
+# Full texts are downloaded to knowledge/, which stays out of git. Internal use only.
+# Set enabled: false to stop using a source; no rebuild is needed.
+sources:
+  - id: DBC-2021
+    title: Dubai Building Code, 2021 Edition
+    issuer: Dubai Municipality
+    date: 2021-12-06
+    language: en
+    jurisdiction: all
+    url: https://dmpmedia.dm.gov.ae/uploads/2021/12/Dubai%20Building%20Code_English_2021%20Edition_compressed.pdf
+    amended_by: [AR-225-2024]
+    enabled: true
+  - id: DECREE-45-2021
+    title: Decree No. (45) of 2021 Concerning the Dubai Building Code
+    issuer: Ruler of Dubai
+    date: 2021-11-18
+    language: en
+    jurisdiction: all
+    url: https://dlp.dubai.gov.ae/Legislation%20Reference/2021/Decree%20No.%20(45)%20of%202021%20Concerning%20the%20Dubai%20Building%20Code.html
+    enabled: true
+  - id: LO-3-1999
+    title: Local Order No. (3) of 1999 Regulating Construction Works
+    issuer: Chairman of Dubai Municipality
+    date: 1999-11-15
+    language: en
+    jurisdiction: dm
+    url: https://dlp.dubai.gov.ae/Legislation%20Reference/1999/Local%20Order%20No.%20(3)%20of%201999%20Regulating%20Construction%20Works.html
+    amended_by: [LO-6-2000, RES-65-2022]
+    superseded_articles: ["4", "8", "9"]
+    enabled: true
+  - id: LAW-6-2019
+    title: Law No. (6) of 2019 Concerning Ownership of Jointly Owned Real Property
+    issuer: Ruler of Dubai
+    date: 2019-09-04
+    language: en
+    jurisdiction: all
+    url: https://dlp.dubai.gov.ae/Legislation%20Reference/2019/Law%20No.%20(6)%20of%202019%20Concerning%20Ownership%20of%20Jointly%20Owned%20Real%20Property%20in%20the%20Emirate%20of%20Dubai.html
+    enabled: true
+  - id: LAW-4-2025
+    title: Law No. (4) of 2025 Establishing the Dubai Civil Defence General Command
+    issuer: Ruler of Dubai
+    date: 2025-04-07
+    language: en
+    jurisdiction: all
+    url: https://dlp.dubai.gov.ae/Legislation%20Reference/2025/Law%20No.%20(4)%20of%202025%20Establishing%20the%20Dubai%20Civil%20Defence%20General%20Command.pdf
+    enabled: true
+  - id: LAW-3-2026
+    title: Law No. (3) of 2026 Concerning the Quality and Safety of Buildings
+    issuer: Ruler of Dubai
+    date: 2026-02-27
+    language: en
+    jurisdiction: all
+    url: https://dlp.dubai.gov.ae/Legislation%20Reference/2026/Law%20No.%20(3)%20of%202026%20Concerning%20the%20Quality%20and%20Safety%20of%20Buildings.html
+    enabled: true
+  - id: AR-227-2022
+    title: Administrative Resolution No. (227) of 2022 Concerning Exemption from Certain Planning Requirements
+    issuer: Dubai Municipality
+    date: 2022-08-09
+    language: en
+    jurisdiction: dm
+    url: https://dlp.dubai.gov.ae/Legislation%20Reference/2022/Administrative%20Resolution%20No.%20(227)%20of%202022%20Concerning%20Exemption%20from%20Certain%20Planning.html
+    enabled: true
+  - id: AR-37-2021
+    title: Administrative Resolution No. (37) of 2021 Amending the Bylaw on Building Requirements
+    issuer: Dubai Municipality
+    date: 2021-02-22
+    language: en
+    jurisdiction: dm
+    url: https://dlp.dubai.gov.ae/Legislation%20Reference/2021/Administrative%20Resolution%20No.%20(37)%20of%202021%20Amending%20the%20Bylaw%20Concerning.html
+    enabled: true
+  - id: CIRCULAR-5-1-1
+    title: Circular 5-1-1 Concerning Fire Prevention
+    issuer: Dubai Municipality
+    date: 2021-08-23
+    language: en
+    jurisdiction: dm
+    url: https://dmpmedia.dm.gov.ae/uploads/2024/11/5-1-1-Concerning-Fire-Prevention.pdf
+    enabled: true
+  - id: CIRCULAR-9-1-1
+    title: Circular 9-1-1 Application of Buildings Information Modelling
+    issuer: Dubai Municipality
+    date: 2021-08-23
+    language: en
+    jurisdiction: dm
+    url: https://dmpmedia.dm.gov.ae/uploads/2024/11/9-1-1-Application-of-Buildings-Information-Modelling.pdf
+    enabled: true
+  - id: CIRCULAR-2-2-1
+    title: Circular 2-2-1 Implementation of Administrative Resolution No. 227 of 2022
+    issuer: Dubai Municipality
+    date: 2022-11-14
+    language: en
+    jurisdiction: dm
+    url: https://dmpmedia.dm.gov.ae/uploads/2024/11/2-2-1-Implementation-of-Administrative-Resolution-No.-227-of-2022.pdf
+    enabled: true
+  - id: DM-MULTISTOREY
+    title: Procedure for Multistorey Buildings
+    issuer: Dubai Municipality
+    date: 2020-05-10
+    language: en
+    jurisdiction: dm
+    url: https://dmpmedia.dm.gov.ae/uploads/2020/06/Multi-Story_Building-Permits-Procedures.pdf
+    enabled: true
+  - id: DM-FAQ
+    title: FAQ for Buildings Permit Procedures and Regulations
+    issuer: Dubai Municipality
+    date: 2023-09-01
+    language: en
+    jurisdiction: dm
+    url: https://dmpmedia.dm.gov.ae/uploads/2023/09/FAQ-for-Buildings-Permit-Procedures-and-Regulations-eng-1.pdf
+    enabled: true
+  - id: TRAKHEES-CP-01
+    title: Client Procedure for Obtaining Modification Permits (CP-01)
+    issuer: PCFC Trakhees
+    date: 2024-09-01
+    language: en
+    jurisdiction: trakhees
+    url: https://pcfc.ae/en/Service%20Documents/PCFC-TRK-CED-MF-CP-01,%20Client%20Procecure%20for%20obtaining%20Modification%20Permits.pdf
+    enabled: true
+  - id: CARDS
+    title: RePermit knowledge cards
+    issuer: RePermit (unverified paraphrases)
+    date: 2026-11-01
+    language: en
+    jurisdiction: all
+    url: ""
+    enabled: true

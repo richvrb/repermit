@@ -13,9 +13,11 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from repermit.bim import MAX_MODEL_BYTES
 from repermit.demo import catalog, start_scenario
-from repermit.knowledge import PUBLIC_PACK, Pack, load_pack
+from repermit.documents import MAX_DOCUMENT_BYTES
+from repermit.knowledge import ARCHIVED_PACKS, PUBLIC_PACK, Pack, load_pack
 from repermit.llm import MODEL, Assessor, ClaudeAssessor
-from repermit.samples import sample_model
+from repermit.retrieval import Retriever, load_cards, load_sources
+from repermit.samples import sample_document, sample_model
 from repermit.service import ActionForbidden, ActionHeld, CaseNotFound, CaseService, InvalidRequest, UnknownItem
 from repermit.store import ConcurrentWrite, EventStore
 
@@ -62,6 +64,13 @@ class ResponseRequest(BaseModel):
     note: str | None = None
 
 
+class FactDecision(BaseModel):
+    name: str
+    accepted: bool
+    actor_id: str
+    role: str
+
+
 class ActionRequest(BaseModel):
     action: str
     actor_id: str
@@ -87,12 +96,12 @@ ERROR_STATUS = {
 }
 
 
-def create_app(database_url: str, pack: Pack, assessor: Assessor | None = None) -> FastAPI:
+def create_app(database_url: str, pack: Pack, assessor: Assessor | None = None, retriever: Retriever | None = None) -> FastAPI:
     app = FastAPI(title="RePermit", version="0.1.0")
     store = EventStore(database_url)
     synthetic = load_pack()
-    packs = {synthetic.version: synthetic, pack.version: pack}
-    service = CaseService(store, pack, assessor=assessor, packs=packs)
+    packs = {item.version: item for item in [synthetic, *map(load_pack, ARCHIVED_PACKS), pack]}
+    service = CaseService(store, pack, assessor=assessor, packs=packs, retriever=retriever)
     offline_service = CaseService(store, synthetic, packs=packs)
     app.state.store = store
 
@@ -112,6 +121,7 @@ def create_app(database_url: str, pack: Pack, assessor: Assessor | None = None) 
             "pack_version": pack.version,
             "llm_enabled": assessor is not None,
             "llm_model": assessor.model if assessor else None,
+            "knowledge_enabled": retriever is not None,
             "roles": pack.roles,
             "stages": pack.stages,
             "resolution_roles": pack.resolution_roles,
@@ -129,6 +139,27 @@ def create_app(database_url: str, pack: Pack, assessor: Assessor | None = None) 
     def demo_model(scenario_id: str, kind: str):
         headers = {"Content-Disposition": f'attachment; filename="{scenario_id}-{kind}.ifc"'}
         return Response(sample_model(scenario_id, kind), media_type="application/x-step", headers=headers)
+
+    @app.get("/demo/documents/{scenario_id}/{document_type}")
+    def demo_document(scenario_id: str, document_type: str, incomplete: bool = False):
+        headers = {"Content-Disposition": f'attachment; filename="{document_type}.pdf"'}
+        return Response(sample_document(scenario_id, document_type, incomplete), media_type="application/pdf", headers=headers)
+
+    @app.get("/knowledge")
+    def knowledge():
+        return {
+            "pack_version": pack.version,
+            "labels": pack.labels,
+            "rules": [
+                {**rule.model_dump(include={"id", "title", "domain", "text", "reference", "requires_evidence"}), "source_url": pack.source(rule.source).url}
+                for rule in pack.rules
+            ],
+            "gaps": [gap.model_dump(include={"id", "when", "description"}) for gap in pack.gaps],
+            "documents": [{"type": name, **item.model_dump()} for name, item in pack.documents.items()],
+            "sources": list(load_sources().values()),
+            "cards": load_cards(),
+            "index_available": retriever is not None,
+        }
 
     @app.get("/health")
     def health():
@@ -157,7 +188,7 @@ def create_app(database_url: str, pack: Pack, assessor: Assessor | None = None) 
     @app.get("/cases/{case_id}/history")
     def get_history(case_id: str):
         return [
-            {**event, "payload": {key: value for key, value in event["payload"].items() if key != "elements"}}
+            {**event, "payload": {key: value for key, value in event["payload"].items() if key not in ("elements", "text")}}
             for event in service.get_history(case_id)
         ]
 
@@ -179,6 +210,17 @@ def create_app(database_url: str, pack: Pack, assessor: Assessor | None = None) 
             raise InvalidRequest("the model is larger than 50 MB")
         content = await request.body()
         return await run_in_threadpool(service.register_model, case_id, kind, filename, content)
+
+    @app.post("/cases/{case_id}/documents")
+    async def upload_document(case_id: str, request: Request, type: str, filename: str = "document.pdf"):
+        if int(request.headers.get("content-length", 0)) > MAX_DOCUMENT_BYTES:
+            raise InvalidRequest("the document is larger than 20 MB")
+        content = await request.body()
+        return await run_in_threadpool(service.register_document, case_id, type, filename, content)
+
+    @app.post("/cases/{case_id}/fact-decisions")
+    def decide_fact(case_id: str, request: FactDecision):
+        return service.decide_fact(case_id, request.model_dump())
 
     @app.post("/cases/{case_id}/responses")
     def submit_response(case_id: str, request: ResponseRequest):
@@ -202,4 +244,5 @@ def app_from_env() -> FastAPI:
     assessor = None
     if os.environ.get("REPERMIT_LLM_PROVIDER", "anthropic") != "none":
         assessor = ClaudeAssessor(os.environ.get("REPERMIT_LLM_MODEL", MODEL))
-    return create_app(database_url, pack, assessor)
+    index = Path(os.environ.get("REPERMIT_KNOWLEDGE_INDEX", "knowledge/index.sqlite"))
+    return create_app(database_url, pack, assessor, Retriever(index) if index.exists() else None)

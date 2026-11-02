@@ -4,11 +4,13 @@ import uuid
 from collections.abc import Callable
 from datetime import date, datetime, timezone
 
-from repermit.assessment import assess
+from repermit.assessment import assess, check_required
 from repermit.bim import MAX_LISTED_CHANGES, InvalidModel, compare, derive_facts, read_model
+from repermit.documents import InvalidDocument, judge_reviews, read_document
 from repermit.control import derive_status, is_authorized, plan
 from repermit.knowledge import Action, Pack
 from repermit.llm import Assessor, AssessorUnavailable, completed_payload, unavailable_payload
+from repermit.retrieval import Retriever
 from repermit.state import CaseState, fold
 from repermit.store import EventStore
 
@@ -76,11 +78,13 @@ class CaseService:
         today: Callable[[], date] = date.today,
         assessor: Assessor | None = None,
         packs: dict[str, Pack] | None = None,
+        retriever: Retriever | None = None,
     ):
         self.store = store
         self.pack = pack
         self.today = today
         self.assessor = assessor
+        self.retriever = retriever
         self.packs = {**(packs or {}), pack.version: pack}
 
     def open_case(
@@ -108,7 +112,8 @@ class CaseService:
             raise InvalidRequest("change_type is required when no LLM is configured")
         source = "llm" if modification["change_type"] is None else "client"
         unit.emit("modification_submitted", {**modification, "change_type_source": source})
-        self._review(unit)
+        if not self._awaiting_model(unit):
+            self._review(unit)
         self._progress(unit)
         return self._commit(unit)
 
@@ -116,6 +121,8 @@ class CaseService:
         unit = self._load(case_id)
         if self.assessor is None or unit.state.modification is None:
             raise InvalidRequest("a review needs a configured LLM and a submitted modification")
+        if self._awaiting_model(unit):
+            raise InvalidRequest("the first review follows when the design model is delivered")
         self._review(unit)
         self._progress(unit)
         return self._commit(unit)
@@ -151,6 +158,48 @@ class CaseService:
         self._after_information(unit)
         return self._commit(unit)
 
+    def register_document(self, case_id: str, type: str, filename: str, content: bytes) -> dict:
+        """Stored without a review: the round is assessed once, when it is submitted."""
+        unit = self._load(case_id)
+        state = unit.state
+        if type not in unit.pack.documents:
+            raise InvalidRequest(f"{type} is not a known document type")
+        try:
+            parsed = read_document(content)
+        except InvalidDocument as error:
+            raise InvalidRequest(str(error)) from error
+        self._add_evidence(unit, _item(
+            f"{type}-{state.revision}", type, "general", state.revision, format="pdf", description=filename,
+            document={**parsed["document"], "filename": filename}, text=parsed["text"],
+        ))
+        if state.modification:
+            self._progress(unit)
+        return self._commit(unit)
+
+    def decide_fact(self, case_id: str, decision: dict) -> dict:
+        """A person confirms or declines a fact that was read from a document."""
+        unit = self._load(case_id)
+        state = unit.state
+        role, name = decision["role"], decision["name"]
+        deficiencies = state.assessment["deficiencies"] if state.assessment else []
+        item = next((d for d in deficiencies if d["code"] == "fact_to_confirm" and d["subject"] == name), None)
+        if item is None:
+            raise UnknownItem(f"no fact {name} to confirm")
+        if role not in unit.pack.resolution_roles:
+            unit.emit("resolution_denied", {"issue_id": f"fact:{name}", "actor_id": decision["actor_id"], "role": role})
+            self._commit(unit)
+            raise ActionForbidden(f"role {role} may not confirm facts")
+        reading = item["reading"]
+        if decision["accepted"]:
+            self._add_evidence(unit, _item(
+                f"confirmed-{name}", "confirmed_fact", item["domain"] or "general", state.revision, facts={name: reading["value"]},
+                description=f"Confirmed by {role} from {reading['document']}: {reading['quote']}",
+            ))
+        else:
+            unit.emit("fact_declined", {"name": name, "evidence_id": reading["evidence_id"], "actor_id": decision["actor_id"], "role": role})
+        self._progress(unit)
+        return self._commit(unit)
+
     def submit_response(self, case_id: str, response: dict) -> dict:
         """One round: everything the applicant adds, followed by one new assessment."""
         unit = self._load(case_id)
@@ -159,7 +208,14 @@ class CaseService:
             raise InvalidRequest("a response needs a submitted modification")
         answers = [item for item in response["answers"] if item["answer"].strip()]
         note = (response["note"] or "").strip()
-        if not (response["facts"] or response["documents"] or answers or note):
+        requires_proof = bool(unit.pack.documents)
+        if requires_proof and (response["documents"] or set(response["facts"]) - set(unit.pack.opening_facts)):
+            raise InvalidRequest("this information must be proven with an uploaded document")
+        unread = [
+            item for item in state.latest_evidence() if item["type"] in unit.pack.documents
+            and state.document_verdicts.get(item["evidence_id"], {}).get("version") != item["version"]
+        ]
+        if not (response["facts"] or response["documents"] or answers or note or unread):
             raise InvalidRequest("a response needs at least one answer, document or note")
         open_items = {item["subject"]: item for item in state.assessment["deficiencies"]}
         for document in response["documents"]:
@@ -261,9 +317,19 @@ class CaseService:
         """New information always gets a new assessment, so nothing progresses on an old review."""
         if unit.state.modification is None:
             return
-        if unit.state.llm_review is not None:
+        unclassified = unit.state.modification["change_type"] is None
+        if (unit.state.llm_review is not None or unclassified) and not self._awaiting_model(unit):
             self._review(unit)
         self._progress(unit)
+
+    def _awaiting_model(self, unit: _Unit) -> bool:
+        """The first paid review waits for the model, which answers many of its questions."""
+        state = unit.state
+        return (
+            state.modification["change_type"] is None
+            and state.permit_type in unit.pack.bim_required_for
+            and check_required("design_model", "architectural", state, self.today()) is not None
+        )
 
     def _load(self, case_id: str) -> _Unit:
         events = self.store.load(case_id)
@@ -281,12 +347,14 @@ class CaseService:
         if self.assessor is None:
             return
         state, model = unit.state, self.assessor.model
+        passages = self.retriever.for_case(state) if self.retriever else []
         try:
-            review = self.assessor.review(state, unit.pack)
+            review = self.assessor.review(state, unit.pack, passages)
         except AssessorUnavailable as error:
             payload = unavailable_payload(str(error), state.revision, model)
         else:
-            payload = completed_payload(review, state.revision, model, unit.pack)
+            payload = completed_payload(review, state.revision, model, unit.pack, passages)
+            payload["document_verdicts"] = judge_reviews(payload["document_reviews"], state, unit.pack)
         unit.emit("llm_review_recorded", {**payload, "round": state.review_rounds + 1})
 
     def _reassess(self, unit: _Unit) -> None:
@@ -349,7 +417,9 @@ class CaseService:
             "stage": state.stage,
             "status": derive_status(state, pack),
             "modification": state.modification,
-            "evidence": [{key: value for key, value in item.items() if key != "elements"} for item in state.latest_evidence()],
+            "evidence": [{key: value for key, value in item.items() if key not in ("elements", "text")} for item in state.latest_evidence()],
+            "document_verdicts": list(state.document_verdicts.values()),
+            "document_types": sorted(pack.documents),
             "scenario": state.scenario,
             "bim_required": state.permit_type in pack.bim_required_for,
             "review_round": state.review_rounds,

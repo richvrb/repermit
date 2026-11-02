@@ -1,0 +1,368 @@
+# Rules derived from public Dubai sources. See docs/source-analysis.md and reports/.
+# All rules are paraphrases and interpretations: kind "derived", not official logic (BR-08).
+version: dubai-public-2026.3
+
+sources:
+  - id: DBC-2021
+    title: Dubai Building Code, 2021 Edition
+    kind: derived
+    issuer: Dubai Municipality
+    url: https://dmpmedia.dm.gov.ae/uploads/2021/12/Dubai%20Building%20Code_English_2021%20Edition_compressed.pdf
+    retrieved: 2026-11-01
+  - id: LO-3-1999
+    title: Local Order No. (3) of 1999 Regulating Construction Works in the Emirate of Dubai
+    kind: derived
+    issuer: Chairman of Dubai Municipality
+    url: https://dlp.dubai.gov.ae/Legislation%20Reference/1999/Local%20Order%20No.%20(3)%20of%201999%20Regulating%20Construction%20Works.html
+    retrieved: 2026-11-01
+  - id: AR-85-2019
+    title: Administrative Resolution No. (85) of 2019 Concerning the Licensing of Decoration Works
+    kind: derived
+    issuer: Dubai Municipality
+    url: https://www.dm.gov.ae/documents/administrative-resolution-no-85-of-2019-concerning-the-licensing-of-decoration-works/
+    retrieved: 2026-11-01
+  - id: DDA-CARDS-2021
+    title: Building Modification Services' ID Cards, Issue 6, December 2021
+    kind: derived
+    issuer: Dubai Development Authority
+    url: https://webzoning.dda.gov.ae/Zoning/Content/dda/ServicesIDs/Building%20Modification%20Services'%20ID%20Cards.pdf
+    retrieved: 2026-11-01
+  - id: GAP-REGISTER
+    title: RePermit register of requirements that could not be read
+    kind: derived
+    issuer: RePermit source analysis (docs/source-analysis.md)
+    url: https://www.dm.gov.ae/municipality-business/laws-and-orders/
+    retrieved: 2026-11-01
+  - id: RES-65-2022
+    title: Executive Council Resolution No. (65) of 2022, amending Local Order 3/1999
+    kind: derived
+    issuer: Chairman of the Executive Council
+    url: https://dlp.dubai.gov.ae/Legislation%20Ar%20Reference/2022/
+    retrieved: 2026-11-01
+  - id: AR-109-2022
+    title: Administrative Resolution No. (109) of 2022 Regulating Licensing of Maintenance Works
+    kind: derived
+    issuer: Dubai Municipality
+    url: https://www.dm.gov.ae/documents/decision-administrative-no-109-of-2022-regarding-regulation-business-license-maintenance/
+    retrieved: 2026-11-01
+  - id: LAW-6-2019
+    title: Law No. (6) of 2019 Concerning Ownership of Jointly Owned Real Property
+    kind: derived
+    issuer: Ruler of Dubai
+    url: https://dlp.dubai.gov.ae/Legislation%20Reference/2019/Law%20No.%20(6)%20of%202019%20Concerning%20Ownership%20of%20Jointly%20Owned%20Real%20Property%20in%20the%20Emirate%20of%20Dubai.html
+    retrieved: 2026-11-01
+  - id: LAW-4-2025
+    title: Law No. (4) of 2025 Establishing the Dubai Civil Defence General Command
+    kind: derived
+    issuer: Ruler of Dubai
+    url: https://dlp.dubai.gov.ae/Legislation%20Reference/2025/Law%20No.%20(4)%20of%202025%20Establishing%20the%20Dubai%20Civil%20Defence%20General%20Command.pdf
+    retrieved: 2026-11-01
+  - id: REG-10-2006
+    title: Regulation No. (10) of 2006 on requests to amend planning and building regulations, with Administrative Resolution 266/2011
+    kind: derived
+    issuer: Chairman of the Executive Council
+    url: https://dmpmedia.dm.gov.ae/uploads/2024/12/نظام-رقم-10-لسنة-2006-بشأن-طلبات-التعديل-على-أنظمة-التخطيط-والبناء-في-إمارة-دبي.pdf
+    retrieved: 2026-11-01
+  - id: REG-3-2007
+    title: Regulation No. (3) of 2007 on requests to amend land and building uses, with Administrative Resolution 266/2011
+    kind: derived
+    issuer: Chairman of the Executive Council
+    url: https://dmpmedia.dm.gov.ae/uploads/2024/12/نظام-رقم-3-لسنة-2007-بشأن-طلبات-التعديل-على-استعمالات-الأراضي-والمباني-في-إمارة-دبي.pdf
+    retrieved: 2026-11-01
+  - id: DDA-SERVICES
+    title: DDA Building Modification service pages
+    kind: derived
+    issuer: Dubai Development Authority
+    url: https://dda.gov.ae/en/planning-development/construction/permits-nocs/building-modification-permit
+    retrieved: 2026-11-01
+
+change_types: [renovation, modification, reconstruction, change_of_use, addition]
+change_type_definitions:
+  renovation: Change to linings or finishes, or strengthening of structure, without any reconfiguration of internal spaces.
+  modification: Fit-out of a space or unit, or a change to a service system or building element.
+  reconstruction: A modification that is not stand-alone. It affects adjacent egress routes or systems outside the reconstructed area, so that a larger part of the building might need to close.
+  change_of_use: Change of use or occupancy of part or all of the building.
+  addition: An increase in the gross area or built-up area, height or depth of the building.
+
+safety_domains: [structural, fire_safety]
+
+roles: [consultant, coordinator, authority, observer]
+resolution_roles: [authority]
+
+bim_formats: [ifc]
+bim_evidence_types: [floor_plan, design_model]
+# A product choice, not a legal duty: for modifications, Circular 9-1-3 covers only buildings previously licensed using BIM.
+bim_required_for: [new_permit, modification]
+max_review_rounds: 3
+opening_facts: [competent_entity]
+
+stages: [design_change, package_prepared, under_review, approved_simulated]
+
+actions:
+  - id: prepare_review_package
+    from_stage: design_change
+    to_stage: package_prepared
+    roles: [consultant, coordinator]
+    autonomy: autonomous
+  - id: submit_for_review
+    from_stage: package_prepared
+    to_stage: under_review
+    roles: [consultant, coordinator]
+    autonomy: conditional
+  - id: approve_modification
+    from_stage: under_review
+    to_stage: approved_simulated
+    roles: [authority]
+    autonomy: human_only
+
+facts:
+  competent_entity:
+    question: Which authority does this building fall under?
+    options:
+      - {value: dda, label: Dubai Development Authority}
+      - {value: dm, label: Dubai Municipality}
+      - {value: other, label: Another authority}
+  building_completed:
+    question: Has a completion certificate been issued for this building?
+  load_bearing:
+    question: Does the modification affect a load-bearing element?
+  fire_compartment_boundary:
+    question: Does the modification affect a fire separation or compartment boundary?
+  safety_systems_changed:
+    question: Does the modification change a fire or life safety system?
+  simple_maintenance:
+    question: Is this only simple maintenance?
+  planning_use_change:
+    question: Does the approved planning use of the building or part of it change?
+  affects_egress:
+    question: Does the modification affect egress routes or systems outside its own area?
+  decoration_works:
+    question: Is this only decoration work within a unit?
+  non_residential_unit:
+    question: Is the unit intended for commercial, office, industrial or service use?
+  in_commercial_centre:
+    question: Is the unit in a commercial centre or shopping centre?
+  unit_over_100m2:
+    question: Is the unit larger than 100 m²?
+  changes_unit_boundary:
+    question: Does the modification change a unit boundary, or add, remove, merge or split space?
+  heritage_area:
+    question: Is the building in a heritage area?
+  facade_change:
+    question: Does the facade or elevation change?
+  historical_building:
+    question: Is this a historical building whose original character must be preserved?
+  relies_on_existing_building:
+    question: Does the extension depend on the existing building for egress or vertical transport?
+  exceeds_zoning:
+    question: Does the modification exceed planning rules, such as GFA, parking, height, setback or land use?
+
+labels:
+  design_model: Proposed design model (IFC)
+  baseline_model: Approved baseline model (IFC)
+  modified_drawings: Approved and proposed drawings showing the changes
+  owner_noc: NOC from the building owner
+  consultant_appointment: Consultant appointment letter
+  project_details_sheet: Project Details Sheet, stamped by the consultant
+  structural_calculations: Structural calculations and model
+  civil_defence_noc: NOC from Dubai Civil Defence
+  impacted_area_assessment: Assessment of the affected parts of the building
+  existing_building_assessment: Assessment of the existing building
+  zoning_exception: Approved zoning exception
+  decoration_licence: Decoration works licence
+  heritage_approval: Approval from the heritage department
+  statement: Applicant statement
+  note: Note
+  planning_modification_approval: Approval of the planning modification request
+  use_change_approval: Approval of the change of use request
+
+rules:
+  - id: DXB-PRM-01
+    title: No construction without a permit
+    domain: permitting
+    source: RES-65-2022
+    reference: LO 3/1999 art. 4 as replaced by Res. 65/2022, and art. 14
+    text: Building works require a licence, and approved drawings may only be changed after approval. Treating this as a document requirement is an interpretation.
+    when: {change_type: [modification, reconstruction, change_of_use, addition]}
+    requires_evidence: [modified_drawings]
+  - id: DXB-PRM-02
+    title: Renovation beyond simple maintenance
+    domain: permitting
+    source: AR-109-2022
+    reference: AR 109/2022, with LO 3/1999 art. 4(b) as replaced by Res. 65/2022
+    text: The Director General can exempt works, and simple maintenance is treated separately. Renovation beyond that follows the permit rule.
+    when: {change_type: renovation, simple_maintenance: false}
+    requires_evidence: [modified_drawings]
+  - id: DXB-SCP-01
+    title: Scope of a modification or renovation
+    domain: permitting
+    source: DBC-2021
+    reference: Sec. A.5.1, Table A.1
+    text: The Building Code and the fire code apply to the fit-out or the change itself, and for renovation to interior finishes and the building envelope.
+    when: {change_type: [renovation, modification]}
+  - id: DXB-ROU-01
+    title: Route after completion
+    domain: permitting
+    source: DDA-SERVICES
+    reference: Building Modification service pages
+    text: After the completion certificate, a change goes through Building Modification. The services are design, permit and completion.
+    when: {competent_entity: dda, building_completed: true}
+  - id: DXB-ROU-02
+    title: Route before completion
+    domain: permitting
+    source: DDA-SERVICES
+    reference: Design Revision service page
+    text: Before the completion certificate, a change to approved plans goes through a design revision, not Building Modification.
+    when: {competent_entity: dda, building_completed: false}
+  - id: DXB-DOC-01
+    title: File for a design modification
+    domain: permitting
+    source: DDA-CARDS-2021
+    reference: M-02, documents 3 to 5
+    text: The consultant provides an NOC from the owner, an appointment letter and the approved and proposed Project Details Sheet. This is Issue 6 of 2021; check it against Form ZA-DC-F-69A.
+    when: {competent_entity: dda, building_completed: true}
+    requires_evidence: [owner_noc, consultant_appointment, project_details_sheet]
+  - id: DXB-STR-01
+    title: Structural calculations
+    domain: structural
+    source: DDA-CARDS-2021
+    reference: M-02, document 6
+    text: Structural calculations and models are required where applicable. The load-bearing trigger is an interpretation.
+    when: {competent_entity: dda, change_type: [renovation, modification, reconstruction, addition], load_bearing: true}
+    requires_evidence: [structural_calculations]
+  - id: DXB-STR-02
+    title: Change to main load-bearing elements
+    domain: structural
+    source: AR-109-2022
+    reference: AR 109/2022 and Circular 3-12-1
+    text: Changing main load-bearing elements needs a permit through a licensed consultant, with drawings, laboratory tests and calculations. Requiring calculations for each listed change type is an interpretation.
+    when: {competent_entity: dm, change_type: [renovation, modification, reconstruction, addition], load_bearing: true}
+    requires_evidence: [structural_calculations]
+  - id: DXB-FIR-01
+    title: Civil Defence NOC
+    domain: fire_safety
+    source: LAW-4-2025
+    reference: Art. 17(4) and 16(a)
+    text: A modification that may affect preventive safety requirements must be notified and approved by Civil Defence. The fire separation trigger is an interpretation. Fire rating requirements are in the UAE Fire and Life Safety Code, which was not read.
+    when: {change_type: [renovation, modification, reconstruction, change_of_use, addition], fire_compartment_boundary: true}
+    requires_evidence: [civil_defence_noc]
+  - id: DXB-FIR-02
+    title: Change to a safety system
+    domain: fire_safety
+    source: LAW-4-2025
+    reference: Art. 17(4) and 19(c)
+    text: Changing a fire or life safety system needs Civil Defence approval. Reading art. 19(c) this way is an interpretation.
+    when: {change_type: [renovation, modification, reconstruction, change_of_use, addition], safety_systems_changed: true}
+    requires_evidence: [civil_defence_noc]
+  - id: DXB-REC-01
+    title: Modification that is not stand-alone
+    domain: fire_safety
+    source: DBC-2021
+    reference: Sec. A.5.1, Table A.1
+    text: If a modification affects adjacent egress routes or systems, it is a reconstruction and the codes also apply to the affected parts.
+    when: {change_type: [modification, reconstruction], affects_egress: true}
+    requires_evidence: [impacted_area_assessment]
+  - id: DXB-COU-01
+    title: Change of use
+    domain: fire_safety
+    source: DBC-2021
+    reference: Sec. A.5.1, Table A.1
+    text: The codes apply to the change and to affected parts, such as escape stairs and routes, vertical transport and sanitary facilities.
+    when: {change_type: change_of_use}
+    requires_evidence: [impacted_area_assessment]
+  - id: DXB-USE-01
+    title: Change of planning use
+    domain: planning
+    source: REG-3-2007
+    reference: Regulation 3/2007 and AR 266/2011
+    text: A change to the approved planning use of a building or part of it needs an application and a fee. This differs from occupancy under the Building Code.
+    when: {competent_entity: dm, planning_use_change: true}
+    requires_evidence: [use_change_approval]
+  - id: DXB-ADD-01
+    title: Addition that relies on the existing building
+    domain: structural
+    source: DBC-2021
+    reference: Sec. A.5.1, Table A.1
+    text: If an addition relies on the existing building for egress or vertical transport, that building must also be checked against the codes.
+    when: {change_type: addition, relies_on_existing_building: true}
+    requires_evidence: [existing_building_assessment]
+  - id: DXB-ZON-01
+    title: Deviation from planning rules
+    domain: planning
+    source: DDA-CARDS-2021
+    reference: C-11
+    text: Deviations in GFA, parking, land use, height or setback go through a zoning exception, which must be incorporated into the design within 6 months. Not yet checked against the current DDA pages.
+    when: {competent_entity: dda, exceeds_zoning: true}
+    requires_evidence: [zoning_exception]
+  - id: DXB-ZON-02
+    title: Deviation from planning rules under Dubai Municipality
+    domain: planning
+    source: REG-10-2006
+    reference: Regulation 10/2006 and AR 266/2011
+    text: A planning or building parameter can be changed under criteria set by the Director General, with a fee.
+    when: {competent_entity: dm, exceeds_zoning: true}
+    requires_evidence: [planning_modification_approval]
+  - id: DXB-DEC-01
+    title: Decoration works licence
+    domain: permitting
+    source: AR-85-2019
+    reference: Art. 2 and 4
+    text: Decoration work in a unit over 100 m² requires a licence, except in commercial centres. This applies to units with commercial, office, industrial or service use, so not to apartments.
+    sequential: true
+    when: {competent_entity: dm, decoration_works: true, non_residential_unit: true, in_commercial_centre: false, unit_over_100m2: true}
+    requires_evidence: [decoration_licence, owner_noc]
+  - id: DXB-DEC-02
+    title: Decoration work stays within the unit
+    domain: permitting
+    source: AR-85-2019
+    reference: Art. 2(3), 2(5), 4(b)(3) and 4(b)(5)
+    text: Decoration work stays within the unit boundaries on the approved drawings and includes no added, removed, merged or split space. Outside that, the decoration route does not apply.
+    sequential: true
+    when: {competent_entity: dm, decoration_works: true, changes_unit_boundary: true}
+    requires_evidence: [owner_noc]
+  - id: DXB-HER-01
+    title: Facade in a heritage area
+    domain: heritage
+    source: DBC-2021
+    reference: Sec. A.2 and A.5.1
+    text: In heritage areas the Building Code applies, and the heritage department checks facade design and treatment.
+    sequential: true
+    when: {facade_change: true, heritage_area: true}
+    requires_evidence: [heritage_approval]
+  - id: DXB-OWN-01
+    title: Unit boundary in jointly owned property
+    domain: property
+    source: LAW-6-2019
+    reference: Art. 9(e) and 39(a)
+    text: A dividing wall between two units is shared by both owners, and substantial alterations need approval from the Master Developer, the Dubai Land Department and the Competent Authority. Applying this to a moved wall is an interpretation, so a reviewer decides.
+    when: {changes_unit_boundary: true}
+
+gaps:
+  - id: DM-DOCS
+    source: GAP-REGISTER
+    when: {competent_entity: dm}
+    description: The official Dubai Municipality document list for modifications (service 4127) could not be read. A competent reviewer must establish what is required.
+  - id: OTHER-ENTITY
+    source: GAP-REGISTER
+    when: {competent_entity: other}
+    description: No rules exist for other authorities. Trakhees, DIFC and others have their own procedures, and a reviewer must establish the route.
+  - id: FIRE-VALUES
+    source: GAP-REGISTER
+    when: {fire_compartment_boundary: true}
+    description: The UAE Fire and Life Safety Code could not be read, so fire ratings and separation requirements must be established by a competent reviewer.
+  - id: EXEMPT-WORKS
+    source: AR-109-2022
+    when: {simple_maintenance: true}
+    description: Simple maintenance can be exempt from a building permit. A reviewer must confirm that the exemption applies.
+  - id: OWN-WALL
+    source: LAW-6-2019
+    when: {changes_unit_boundary: true}
+    description: A unit boundary changes. A reviewer must establish the consent of both owners and any Dubai Land Department steps for changed areas. No text literally requires an NOC from the second owner.
+  - id: OWN-COMMON
+    source: LAW-6-2019
+    when: {changes_unit_boundary: true, load_bearing: true}
+    description: A structural wall can be a Common Part under art. 7 and art. 17. A reviewer must establish whether the owners committee or management entity must be involved.
+  - id: HISTORICAL
+    source: DBC-2021
+    when: {historical_building: true}
+    description: The Building Code does not apply to historical buildings; authority guidelines apply to them, and these have not been researched.

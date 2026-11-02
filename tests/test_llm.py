@@ -45,8 +45,9 @@ class FakeAssessor:
         self.results = list(results)
         self.calls = 0
 
-    def review(self, state, pack):
+    def review(self, state, pack, passages=()):
         self.calls += 1
+        self.passages = list(passages)
         result = self.results[min(self.calls, len(self.results)) - 1]
         if isinstance(result, Exception):
             raise result

@@ -9,6 +9,8 @@ from pydantic import BaseModel, model_validator
 
 DEFAULT_PACK = Path(__file__).parent / "packs" / "synthetic.yaml"
 PUBLIC_PACK = Path(__file__).parent / "packs" / "dubai_public.yaml"
+# Earlier versions stay loadable, so a case keeps the rules it started with.
+ARCHIVED_PACKS = [Path(__file__).parent / "packs" / f"dubai_public_{name}.yaml" for name in ("2026_1", "2026_2", "2026_3")]
 LEGACY_PACK_VERSION = "synthetic-2026.1"
 
 
@@ -46,6 +48,8 @@ class Rule(BaseModel):
     title: str = ""
     text: str = ""
     reference: str = ""
+    # Ask this rule's facts one at a time, when a later fact only matters after the first.
+    sequential: bool = False
 
 
 class Gap(BaseModel):
@@ -63,6 +67,11 @@ class Action(BaseModel):
     autonomy: Literal["autonomous", "conditional", "human_only"]
 
 
+class DocumentType(BaseModel):
+    must_contain: list[str]
+    proves: list[str] = []
+
+
 class Pack(BaseModel):
     version: str
     sources: list[Source]
@@ -74,12 +83,15 @@ class Pack(BaseModel):
     bim_evidence_types: list[str]
     bim_required_for: list[str] = []
     max_review_rounds: int = 3
+    # Asked before the first review, because they decide which rules apply.
+    opening_facts: list[str] = []
     stages: list[str]
     actions: list[Action]
     rules: list[Rule]
     gaps: list[Gap] = []
     change_type_definitions: dict[str, str] = {}
     facts: dict[str, Fact] = {}
+    documents: dict[str, DocumentType] = {}
     labels: dict[str, str] = {}
 
     @model_validator(mode="after")
@@ -95,6 +107,11 @@ class Pack(BaseModel):
         for rule in self.rules:
             if sources[rule.source].kind != "synthetic" and not (rule.title and rule.text and rule.reference):
                 raise ValueError(f"{rule.id} needs a title, text and reference")
+
+        for name, document in self.documents.items():
+            unknown_facts = set(document.proves) - set(self.facts)
+            if unknown_facts:
+                raise ValueError(f"document {name} proves undeclared facts {unknown_facts}")
 
         seen_stages = set()
         for action in self.actions:

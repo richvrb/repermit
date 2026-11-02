@@ -93,11 +93,11 @@ def test_live_case_starts_with_baseline_and_no_proposal(public):
 
 def test_proposed_model_closes_the_deficiency_and_answers_questions(public):
     case = start(public)
-    assert "load_bearing" in subjects(case)
+    assert subjects(case) == ["design_model", "competent_entity"]
     updated = upload(public, case["case_id"], sample_model("llm_free_text", "proposed")).json()
     assert "design_model" not in subjects(updated)
-    assert "load_bearing" not in subjects(updated)
-    assert "structural_calculations" in subjects(updated) or "competent_entity" in subjects(updated)
+    assert "fire_compartment_boundary" not in subjects(updated)
+    assert "civil_defence_noc" in subjects(updated)
     assert updated["evidence"][-1]["changes"][0]["name"] == "Wall 4A-4B"
 
 
@@ -114,15 +114,6 @@ def test_metadata_only_model_is_refused(public):
     response = public.post(f"/cases/{case['case_id']}/evidence", json=body)
     assert response.status_code == 422
     assert "uploaded" in response.text
-
-
-def test_model_can_contradict_an_answer(public):
-    case = start(public)
-    case_id = case["case_id"]
-    public.post(f"/cases/{case_id}/responses", json={"facts": {"load_bearing": False}})
-    updated = upload(public, case_id, sample_model("llm_free_text", "proposed")).json()
-    codes = {item["subject"]: item["code"] for item in updated["assessment"]["deficiencies"]}
-    assert codes["load_bearing"] == "inconsistent_fact"
 
 
 def test_without_baseline_no_facts_are_derived(database_url):

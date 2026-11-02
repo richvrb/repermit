@@ -13,6 +13,20 @@ def test_index_is_served(client):
     assert '<html lang="en">' in response.text
 
 
+def test_knowledge_page_data(database_url):
+    client = TestClient(create_app(database_url, load_pack(PUBLIC_PACK)))
+    data = client.get("/knowledge").json()
+    assert data["pack_version"].startswith("dubai-public")
+    assert all(rule["id"] and rule["source_url"] for rule in data["rules"])
+    assert data["gaps"] and data["documents"] and data["sources"] and data["cards"]
+    assert data["index_available"] is False
+
+
+def test_navigation_is_served(client):
+    html = client.get("/").text
+    assert 'id="nav"' in html and "CASE_TABS" in html
+
+
 def test_meta_exposes_pack_choices(client):
     meta = client.get("/meta").json()
     assert meta["llm_enabled"] is False

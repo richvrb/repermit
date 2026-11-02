@@ -142,6 +142,29 @@ def test_flag_closes_when_the_rules_cover_the_domain(run):
     assert "llm:B:fire_safety" not in flags(case)
 
 
+def test_first_review_waits_for_the_model(database_url):
+    from fastapi.testclient import TestClient
+
+    from repermit.api import create_app
+    from repermit.knowledge import PUBLIC_PACK, load_pack
+    from repermit.samples import sample_model
+    from tests.test_llm import FakeAssessor
+
+    assessor = FakeAssessor(review("modification"))
+    client = TestClient(create_app(database_url, load_pack(PUBLIC_PACK), assessor))
+    case = client.post("/demo/scenarios/llm_free_text").json()
+    case_id = case["case_id"]
+    assert assessor.calls == 0
+    assert case["status"] == "pending_evidence"
+    case = client.post(f"/cases/{case_id}/responses", json={"facts": {"competent_entity": "dda"}}).json()
+    assert assessor.calls == 0
+    assert case["assessment"]["llm_review"] is None
+    case = client.post(f"/cases/{case_id}/models", content=sample_model("llm_free_text", "proposed")).json()
+    assert assessor.calls == 1
+    assert case["review_round"] == 1
+    assert case["modification"]["change_type"] == "modification"
+
+
 def test_prompt_carries_round_facts_and_model_changes(run, pack):
     from repermit.state import fold
 

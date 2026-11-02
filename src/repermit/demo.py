@@ -187,7 +187,8 @@ def free_text_case(service: CaseService, title: str, description: str, scenario_
 
 
 def llm_free_text(service: CaseService) -> dict:
-    return free_text_case(service, "Wall relocation with AI", LLM_DESCRIPTION)
+    case = free_text_case(service, "Wall relocation with AI", LLM_DESCRIPTION)
+    return service.register_model(case["case_id"], "proposed", "proposed-model.ifc", sample_model("llm_free_text", "proposed"))
 
 
 DESCRIPTIONS = {

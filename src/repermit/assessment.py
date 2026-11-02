@@ -101,7 +101,7 @@ def open_questions(state: CaseState, pack: Pack) -> list[dict]:
     if review is None or review["status"] != "completed" or state.review_rounds >= pack.max_review_rounds:
         return []
     return [
-        {"code": "ai_question", "domain": item["domain"], "subject": f"ai-{index}", "detail": item["reason"], "question": item["question"]}
+        {"code": "ai_question", "domain": item["domain"], "subject": f"ai-{index}", "detail": item["reason"], "question": item["question"], "document": item.get("document", "")}
         for index, item in enumerate(review["information_requests"], 1)
     ]
 
@@ -189,6 +189,32 @@ def check_required(evidence_type: str, domain: str, state: CaseState, today: dat
     return {"code": code, "domain": domain, "subject": evidence_type, "detail": f"{item['evidence_id']}: {code}."}
 
 
+def check_document(evidence_type: str, domain: str, state: CaseState, pack: Pack, today: date) -> dict | None:
+    """Beyond being there: a document must have been read and contain what it should."""
+    deficiency = check_required(evidence_type, domain, state, today)
+    if deficiency or evidence_type not in pack.documents:
+        return deficiency
+    item = next(item for item in state.latest_evidence() if item["type"] == evidence_type)
+    verdict = state.document_verdicts.get(item["evidence_id"])
+    if verdict is None or verdict["version"] != item["version"]:
+        return {"code": "document_pending", "domain": domain, "subject": evidence_type, "detail": "Waiting for the assessment in the next round."}
+    if verdict["status"] == "incomplete":
+        details = verdict["problems"] + [f"Missing: {entry}" for entry in verdict["missing"]]
+        return {"code": "document_incomplete", "domain": domain, "subject": evidence_type, "detail": " ".join(details)}
+    return None
+
+
+def facts_to_confirm(state: CaseState) -> dict[str, dict]:
+    """Facts read from complete documents, waiting for a person."""
+    found = {}
+    for verdict in state.document_verdicts.values():
+        if verdict["status"] == "complete":
+            for fact in verdict["facts"]:
+                if (fact["name"], verdict["evidence_id"]) not in state.declined_facts:
+                    found.setdefault(fact["name"], {**fact, "evidence_id": verdict["evidence_id"], "document": verdict["type"]})
+    return found
+
+
 def classify_impact(item: dict, status: str, revision: str) -> str:
     if status == "not_affected" or item["revision"] == revision:
         return "retained"
@@ -206,7 +232,9 @@ def fingerprint(domains: dict, deficiencies: list[dict], issues: list[dict]) -> 
 
 def unknown_fact(name: str, domain: str, pack: Pack) -> dict:
     fact = pack.facts.get(name)
+    documents = [] if name in pack.opening_facts else [key for key, item in pack.documents.items() if name in item.proves]
     return {
+        "documents": documents,
         "code": "unknown_fact",
         "domain": domain,
         "subject": name,
@@ -229,10 +257,42 @@ def describe_rule(rule: Rule, pack: Pack) -> dict:
     }
 
 
+def pending_assessment(state: CaseState, pack: Pack, today: date, facts: dict[str, Any]) -> dict:
+    """Before the first review: the type is not known, so only the opening facts and the model are open."""
+    domains = {rule.domain: "potentially_affected" for rule in pack.rules}
+    model = check_required("design_model", "architectural", state, today)
+    deficiencies = ([model] if model else []) + [
+        unknown_fact(name, "permitting", pack) for name in pack.opening_facts if name not in facts
+    ]
+    return {
+        "revision": state.revision,
+        "pack_version": pack.version,
+        "domains": domains,
+        "applied_rules": [],
+        "impact": [],
+        "deficiencies": deficiencies,
+        "issues": [],
+        "withdrawn_flags": [],
+        "llm_review": None,
+        "basis": {"revision": state.revision, "evidence": {item["evidence_id"]: item["version"] for item in state.latest_evidence()}},
+        "fingerprint": fingerprint(domains, deficiencies, []),
+        "disclaimer": DISCLAIMER,
+    }
+
+
 def assess(state: CaseState, pack: Pack, today: date) -> dict:
     facts, deficiencies = collect_facts(state)
+    if state.modification["change_type"] is None:
+        return pending_assessment(state, pack, today, facts)
     context = {**facts, "change_type": state.modification["change_type"]}
 
+    proposed = facts_to_confirm(state)
+    for name, reading in proposed.items():
+        if name in facts and facts[name] != reading["value"]:
+            deficiencies.append({
+                "code": "inconsistent_fact", "domain": None, "subject": name,
+                "detail": f"{reading['document']} states {reading['value']}, but the case has {facts[name]}.",
+            })
     results = [(rule, *evaluate(rule.when, context)) for rule in pack.rules]
     applicable = [rule for rule, match, _ in results if match is True]
     conflicts, excluded = find_conflicts(applicable, state)
@@ -245,14 +305,18 @@ def assess(state: CaseState, pack: Pack, today: date) -> dict:
     for rule, match, unknown in results:
         if match is None:
             domains[rule.domain] = max(domains[rule.domain], "potentially_affected", key=DOMAIN_ORDER.get)
-            # Ask one fact per rule; the next one follows once this one is answered.
-            name = unknown[0]
-            if not any(d["subject"] == name for d in deficiencies):
-                deficiencies.append(unknown_fact(name, rule.domain, pack))
+            # Ask everything at once, except facts that depend on the answer to an earlier one.
+            first_only = rule.sequential or "competent_entity" in unknown
+            for name in unknown[:1] if first_only else unknown:
+                if not any(d["subject"] == name for d in deficiencies):
+                    deficiency = unknown_fact(name, rule.domain, pack)
+                    if name in proposed:
+                        deficiency |= {"code": "fact_to_confirm", "detail": f"{name} was read from a document.", "reading": proposed[name]}
+                    deficiencies.append(deficiency)
 
     for rule in applied:
         for evidence_type in rule.requires_evidence:
-            deficiency = check_required(evidence_type, rule.domain, state, today)
+            deficiency = check_document(evidence_type, rule.domain, state, pack, today)
             if deficiency and deficiency not in deficiencies:
                 deficiencies.append(deficiency)
 
@@ -261,6 +325,11 @@ def assess(state: CaseState, pack: Pack, today: date) -> dict:
         if deficiency:
             deficiencies.append(deficiency)
     deficiencies += open_questions(state, pack)
+    for item in state.latest_evidence():
+        if item["type"] == "supporting_document" or (item["type"] in pack.documents and pack.documents[item["type"]].proves):
+            deficiency = check_document(item["type"], item["domain"], state, pack, today)
+            if deficiency and not any(d["subject"] == item["type"] for d in deficiencies):
+                deficiencies.append(deficiency)
 
     llm_issues, withdrawn = find_llm_issues(state, domains, pack)
     issues += llm_issues

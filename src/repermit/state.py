@@ -18,6 +18,8 @@ class CaseState:
     base_revision: str = ""
     scenario: str | None = None
     review_rounds: int = 0
+    document_verdicts: dict[str, dict] = field(default_factory=dict)
+    declined_facts: set[tuple[str, str]] = field(default_factory=set)
     modification: dict | None = None
     evidence: dict[str, list[dict]] = field(default_factory=dict)
     resolutions: dict[str, dict] = field(default_factory=dict)
@@ -48,12 +50,15 @@ class CaseState:
             case "llm_review_recorded":
                 self.llm_review = payload
                 self.review_rounds += payload["status"] == "completed"
+                self.document_verdicts |= {item["evidence_id"]: item for item in payload.get("document_verdicts", [])}
                 if self.modification["change_type_source"] == "llm":
                     self.modification["change_type"] = payload["effective_change_type"]
             case "evidence_registered":
                 self.evidence.setdefault(payload["evidence_id"], []).append(payload)
             case "issue_resolved":
                 self.resolutions[payload["issue_id"]] = payload
+            case "fact_declined":
+                self.declined_facts.add((payload["name"], payload["evidence_id"]))
             case "assessment_recorded":
                 self.assessment = payload
             case "action_executed":

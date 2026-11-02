@@ -31,6 +31,7 @@ aside { display: grid; gap: 16px; }
 main { display: grid; gap: 16px; min-width: 0; }
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; min-width: 0; }
 .panel.ai { border-color: var(--ai); }
+a, a:visited { color: var(--info); }
 h2 { font-size: 15px; margin: 0 0 8px; }
 h3 { font-size: 14px; margin: 14px 0 6px; }
 p { margin: 4px 0; }
@@ -47,6 +48,15 @@ button:disabled { opacity: .55; cursor: wait; }
 .scenario, .case-row { display: block; width: 100%; text-align: left; padding: 8px 10px; margin-bottom: 6px; }
 .scenario .title, .case-row .title { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
 .case-row.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+header.top nav { display: flex; gap: 4px; }
+header.top nav a, nav.tabs a { color: var(--muted); text-decoration: none; padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 14px; }
+header.top nav a:hover, nav.tabs a:hover { background: var(--neutral-bg); color: var(--text); }
+header.top nav a.active { background: var(--accent); color: var(--accent-text); }
+nav.tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
+nav.tabs a { border-radius: 6px 6px 0 0; }
+nav.tabs a.active { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+#page { display: grid; gap: 16px; padding: 16px 20px; }
+[hidden] { display: none !important; }
 .scroll { max-height: 42vh; overflow-y: auto; }
 .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; white-space: nowrap; flex: none; align-self: flex-start; background: var(--neutral-bg); color: var(--muted); }
 .badge.ok { background: var(--ok-bg); color: var(--ok); }
@@ -100,10 +110,10 @@ dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14
 <body>
 <header class="top">
   <h1>RePermit demo</h1>
-  <span class="tag">A building permit moving through the process with AI</span>
+  <nav id="nav" aria-label="Main"></nav>
   <label class="role">Acting as <select id="role"></select></label>
 </header>
-<div class="layout">
+<div class="layout" id="cases-page">
   <aside>
     <section class="panel">
       <h2>Test cases</h2>
@@ -118,6 +128,7 @@ dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14
   </aside>
   <main id="main"><div class="panel empty">Choose a test case on the left to see the flow.</div></main>
 </div>
+<div id="page" hidden></div>
 <p class="notice" id="notice"></p>
 <div id="toast" role="status"></div>
 <dialog id="dialog"></dialog>
@@ -134,7 +145,7 @@ const LABELS = {
   autonomy: { autonomous: "May run automatically", human_review: "Human review required", human_only: "Humans only" },
   role: { consultant: "Consultant", coordinator: "Coordinator", authority: "Authority", observer: "Observer" },
   issue: { rule_conflict: "Rules contradict each other", process_gap: "Process gap", retrieval_gap: "Not covered by the rules", llm_flag: "AI sees a risk outside the rules", llm_unavailable: "AI review unavailable" },
-  deficiency: { missing: "Missing", insufficient: "Insufficient", outdated: "Expired", revision_unknown: "Revision unknown", stale_revision: "Belongs to an old revision", unknown_fact: "Not yet known", inconsistent_fact: "Contradictory", ai_question: "AI question" },
+  deficiency: { missing: "Missing", insufficient: "Insufficient", outdated: "Expired", revision_unknown: "Revision unknown", stale_revision: "Belongs to an old revision", unknown_fact: "Not yet known", inconsistent_fact: "Contradictory", ai_question: "AI question", document_pending: "Waiting for assessment", document_incomplete: "Incomplete", fact_to_confirm: "Reviewer must confirm" },
   impact: { retained: "Still valid", review: "Check", revalidate: "Revalidate" },
   subject: {
     floor_plan: "Floor plan", design_model: "Design model (IFC)", baseline_model: "Baseline model (IFC)", fire_strategy: "Fire strategy", structural_assessment: "Structural assessment",
@@ -192,7 +203,7 @@ function toast(message, ok = false) {
 }
 
 const emptyDraft = () => ({ facts: {}, answers: {}, documents: {}, note: "" });
-const state = { draft: emptyDraft(), meta: null, role: "consultant", cases: [], caseId: null, view: null, latest: null, history: [], at: null, timer: null };
+const state = { page: "cases", tab: "overview", afterRoute: null, draft: emptyDraft(), meta: null, role: "consultant", cases: [], caseId: null, view: null, latest: null, history: [], at: null, timer: null };
 
 async function run(button, text, work) {
   const original = [...button.childNodes];
@@ -237,12 +248,13 @@ function scenarioRow(item) {
 }
 
 async function openCase(caseId) {
-  stopPlaying();
-  state.caseId = caseId;
-  state.draft = emptyDraft();
-  state.at = null;
-  location.hash = caseId;
-  await refresh();
+  const target = `#/case/${caseId}`;
+  state.view = null;
+  if (location.hash === target) await route();
+  else {
+    // route() runs on hashchange. Started cases open as soon as it has loaded them.
+    await new Promise((resolve) => { state.afterRoute = resolve; location.hash = target; });
+  }
 }
 
 async function refresh() {
@@ -278,21 +290,103 @@ function togglePlay() {
   }, 1300);
 }
 
+const CASE_TABS = [["overview", "Overview"], ["model", "BIM model"], ["documents", "Documents"], ["rules", "Rules and AI"], ["flow", "Flow"]];
+
+function caseTabs(view) {
+  const open = view.assessment ? view.assessment.deficiencies.length + view.assessment.issues.length : 0;
+  return el("nav", { class: "tabs" }, CASE_TABS
+    .filter(([key]) => key !== "model" || view.bim_required)
+    .map(([key, text]) => el("a", { href: `#/case/${view.case_id}/${key}`, class: state.tab === key ? "active" : "" },
+      text, key === "overview" && open ? ` (${open})` : "")));
+}
+
+function tabSections(view, readOnly) {
+  if (state.tab === "model" && view.bim_required) return [bimPanel(view, readOnly)];
+  if (state.tab === "flow") return [flowPanel()];
+  if (state.tab === "documents") {
+    const panels = [view.document_verdicts.length ? documentPanel(view) : null, view.evidence.length ? evidencePanel(view) : null].filter(Boolean);
+    return panels.length ? panels : [el("div", { class: "panel muted" }, "No documents yet.")];
+  }
+  if (!view.assessment) return [el("div", { class: "panel muted" }, "At this point the rules have not assessed the modification yet. Choose a later step in the flow.")];
+  if (state.tab === "rules") return [domainPanel(view)];
+  const left = [nextStepPanel(view, readOnly), informationPanel(view, readOnly)];
+  return [el("div", { class: "grid2" }, el("div", { style: "display:grid;gap:16px;align-content:start" }, left), aiPanel(view, readOnly))];
+}
+
 function render() {
   const view = state.view;
   const readOnly = state.at !== null;
-  const sections = [headerPanel(view, readOnly)];
-  if (view.bim_required) sections.push(bimPanel(view, readOnly));
-  if (view.assessment) {
-    const left = [nextStepPanel(view, readOnly), informationPanel(view, readOnly)];
-    sections.push(el("div", { class: "grid2" }, el("div", { style: "display:grid;gap:16px;align-content:start" }, left), aiPanel(view, readOnly)));
-    sections.push(domainPanel(view));
-  } else {
-    sections.push(el("div", { class: "panel muted" }, "At this point the rules have not assessed the modification yet. Choose a later step in the flow."));
+  $("main").replaceChildren(headerPanel(view, readOnly), caseTabs(view), ...tabSections(view, readOnly));
+}
+
+const PAGES = { cases: "Cases", rules: "Rules", sources: "Sources" };
+
+function renderNav() {
+  $("nav").replaceChildren(...Object.entries(PAGES).map(([key, text]) => el("a", { href: key === "cases" ? "#/" : `#/${key}`, class: state.page === key ? "active" : "" }, text)),
+    el("a", { href: "/docs", target: "_blank", rel: "noopener" }, "API"));
+  $("cases-page").hidden = state.page !== "cases";
+  $("page").hidden = state.page === "cases";
+}
+
+function table(headers, rows) {
+  return el("div", { style: "overflow-x:auto" }, el("table", {},
+    el("thead", {}, el("tr", {}, headers.map((text) => el("th", {}, text)))),
+    el("tbody", {}, rows.map((row) => el("tr", {}, row.map((cell) => el("td", {}, cell)))))));
+}
+
+const sourceLink = (title, url) => (url ? el("a", { href: url, target: "_blank", rel: "noopener" }, title) : title);
+
+async function renderRulesPage() {
+  const data = await api("/knowledge");
+  $("page").replaceChildren(
+    el("section", { class: "panel" }, el("h2", {}, `Rules: ${data.pack_version}`),
+      el("p", { class: "muted" }, "Derived from public sources. These are interpretations, not official logic, and no expert has confirmed them."),
+      table(["Rule", "Domain", "What it says", "Requires", "Source"], data.rules.map((rule) => [
+        el("strong", {}, rule.id), label("domain", rule.domain), el("div", {}, el("strong", {}, rule.title), el("div", { class: "muted" }, rule.text)),
+        rule.requires_evidence.map(subjectIn(data)).join(", ") || "–", sourceLink(rule.reference, rule.source_url),
+      ]))),
+    el("section", { class: "panel" }, el("h2", {}, "Known gaps"), el("p", { class: "muted" }, "These always go to a reviewer."),
+      table(["Gap", "When", "What it means"], data.gaps.map((gap) => [el("strong", {}, gap.id), Object.entries(gap.when).map(([key, value]) => `${key} = ${value}`).join(", "), gap.description]))),
+    el("section", { class: "panel" }, el("h2", {}, "Document checklists"), el("p", { class: "muted" }, "What each document must contain. A document is complete only when every item is present."),
+      table(["Document", "Must contain", "Can prove"], data.documents.map((item) => [el("strong", {}, subjectIn(data)(item.type)), item.must_contain.join("; "), item.proves.join(", ") || "–"]))));
+}
+
+const subjectIn = (data) => (key) => data.labels[key] || key;
+
+async function renderSourcesPage() {
+  const data = await api("/knowledge");
+  $("page").replaceChildren(
+    el("section", { class: "panel" }, el("h2", {}, "Sources for retrieval"),
+      el("p", { class: "muted" }, data.index_available ? "Passages from these sources are retrieved per review. Internal use only: check the reuse terms before showing them outside." : "No search index is available, so reviews run without passages."),
+      table(["Source", "Issuer", "Date", "Language", "Authority", "Status"], data.sources.map((source) => [
+        el("div", {}, sourceLink(source.title, source.url), source.amended_by && source.amended_by.length ? el("div", { class: "muted" }, `Amended by ${source.amended_by.join(", ")}`) : null),
+        source.issuer, String(source.date), source.language.toUpperCase(), source.jurisdiction, source.enabled ? badge("On", "ok") : badge("Off"),
+      ]))),
+    el("section", { class: "panel" }, el("h2", {}, "Knowledge cards"), el("p", { class: "muted" }, "Paraphrases for sources that are Arabic-only or unavailable. None has been confirmed by an expert."),
+      table(["Reference", "Authority", "Text"], data.cards.map((card) => [sourceLink(card.reference, card.url), card.jurisdiction, card.text]))));
+}
+
+async function route() {
+  const [page, id, tab] = location.hash.replace(/^#\/?/, "").split("/");
+  stopPlaying();
+  if (page === "rules" || page === "sources") {
+    state.page = page;
+    renderNav();
+    await (page === "rules" ? renderRulesPage() : renderSourcesPage());
+    return;
   }
-  sections.push(flowPanel());
-  if (view.evidence.length) sections.push(evidencePanel(view));
-  $("main").replaceChildren(...sections);
+  state.page = "cases";
+  renderNav();
+  const caseId = page === "case" ? id : page || null;
+  if (caseId !== state.caseId) {
+    state.draft = emptyDraft();
+    state.at = null;
+    state.caseId = caseId;
+    state.view = null;
+  }
+  state.tab = tab || "overview";
+  if (state.view) render();
+  else await refresh();
 }
 
 function headerPanel(view, readOnly) {
@@ -301,7 +395,7 @@ function headerPanel(view, readOnly) {
   return el("section", { class: "panel" },
     el("div", { class: "case-head" },
       el("div", {}, el("h2", {}, view.project_name.replace("[SYNTHETIC] ", "")),
-        el("span", { class: "muted" }, `Rules: ${view.pack_version} · design revision ${view.revision}${view.modification ? ` · type ${view.modification.change_type}` : ""}`)),
+        el("span", { class: "muted" }, `Rules: ${view.pack_version} · design revision ${view.revision}${view.modification ? ` · type ${view.modification.change_type || "not yet classified"}` : ""}`)),
       badge(label("status", view.status), LABELS.statusClass[view.status])),
     view.modification && el("p", {}, view.modification.description),
     el("div", { class: "stages" }, stages.map((stage, index) => el("div", {
@@ -338,23 +432,92 @@ function informationPanel(view, readOnly) {
   const heading = view.review_round ? `Round ${view.review_round} of at most ${view.max_review_rounds}: open items` : "Open items";
   const panel = el("section", { class: "panel" }, el("h2", {}, heading));
   if (!deficiencies.length && !issues.length) panel.append(el("p", { class: "muted" }, "There are no open items."));
-  for (const item of deficiencies) panel.append(deficiencyRow(item, readOnly));
+  for (const item of deficiencies) panel.append(deficiencyRow(item, view, readOnly));
   for (const issue of issues) panel.append(issueRow(issue, view, readOnly));
+  if (!readOnly && view.document_types.length) panel.append(documentRequests(view));
   if (!readOnly) panel.append(el("h3", {}, "Add more information"), responseForm(view));
   return panel;
 }
 
-function deficiencyRow(item, readOnly) {
+const usesDocuments = (view) => view.document_types.length > 0;
+const unreviewed = (view, type) => view.evidence.some((item) => item.type === type && item.document
+  && !view.document_verdicts.some((verdict) => verdict.evidence_id === item.evidence_id && verdict.version === item.version));
+
+function deficiencyRow(item, view, readOnly) {
   const row = el("div", { class: "request" },
     el("div", {}, el("strong", {}, item.question || subject(item.subject)), " ", badge(label("deficiency", item.code), item.code === "ai_question" ? "ai" : "warn")),
     item.domain && el("span", { class: "muted" }, label("domain", item.domain)),
-    item.code === "ai_question" && el("div", { class: "muted" }, item.detail));
+    item.code === "ai_question" && el("div", { class: "muted" }, item.detail),
+    item.code === "document_incomplete" && el("div", { class: "muted" }, item.detail));
+  if (item.documents && item.documents.length) row.append(el("div", { class: "muted" }, `Prove with: ${item.documents.map(subject).join(" or ")}`));
+  if (item.document) row.append(el("div", { class: "muted" }, `Requested document: ${subject(item.document)}`));
+  if (item.code === "fact_to_confirm") row.append(factConfirmation(item, view, readOnly));
   if (readOnly) return row;
-  if (item.code === "unknown_fact" || item.code === "inconsistent_fact") row.append(factInput(item));
-  else if (item.code === "ai_question") row.append(answerInput(item));
+  if (item.code === "ai_question") row.append(answerInput(item));
   else if (item.subject === "design_model") row.append(el("p", { class: "muted" }, "Upload the IFC file in the BIM model panel."));
+  else if (item.code === "fact_to_confirm") return row;
+  else if (item.code === "unknown_fact" || item.code === "inconsistent_fact") {
+    if (!usesDocuments(view) || !(item.documents && item.documents.length)) row.append(factInput(item));
+  } else if (view.document_types.includes(item.subject)) row.append(documentUpload(item.subject, view));
   else row.append(documentInput(item));
   return row;
+}
+
+function factConfirmation(item, view, readOnly) {
+  const { value, quote, document } = item.reading;
+  const decide = (accepted) => (event) => run(event.currentTarget, "Working…", async () => {
+    await api(`/cases/${view.case_id}/fact-decisions`, "POST", { name: item.subject, accepted, actor_id: "demo-user", role: state.role });
+    toast(accepted ? "Fact confirmed." : "Fact declined.", true);
+    await refresh();
+  });
+  return el("div", {},
+    el("p", {}, `Read from ${subject(document)}: `, el("strong", {}, String(value))),
+    el("p", { class: "muted" }, `"${quote}"`),
+    !readOnly && el("div", { class: "answer" },
+      el("button", { class: "primary", onclick: decide(true) }, `Confirm as ${label("role", state.role)}`),
+      el("button", { onclick: decide(false) }, "Decline")));
+}
+
+function documentUpload(type, view) {
+  const input = el("input", { type: "file", accept: ".pdf", "aria-label": `File for ${subject(type)}` });
+  const row = el("div", { class: "answer" }, input, el("button", {
+    onclick: (event) => {
+      if (!input.files.length) return;
+      run(event.currentTarget, "Reading…", () => uploadDocument(view, type, input.files[0].name, input.files[0]));
+    },
+  }, "Upload"));
+  const sample = (incomplete) => (event) => run(event.currentTarget, "Reading…", async () => {
+    const blob = await (await fetch(`/demo/documents/${view.scenario}/${type}?incomplete=${incomplete}`)).blob();
+    await uploadDocument(view, type, `${type}.pdf`, blob);
+  });
+  if (view.scenario) row.append(el("button", { onclick: sample(false) }, "Use sample"), el("button", { onclick: sample(true) }, "Use incomplete sample"));
+  return el("div", {}, unreviewed(view, type) && badge("Uploaded, assessed in the next round", "info"), row);
+}
+
+async function uploadDocument(view, type, filename, content) {
+  const params = new URLSearchParams({ type, filename });
+  const response = await fetch(`/cases/${view.case_id}/documents?${params}`, { method: "POST", body: content });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(errorMessage(response.status, data.detail));
+  toast("Document stored. It is assessed when you submit this round.", true);
+  await refresh();
+}
+
+function documentRequests(view) {
+  const open = view.assessment.deficiencies;
+  const types = new Set(open.filter((item) => item.code === "unknown_fact").map((item) => (item.documents || [])[0]).filter(Boolean));
+  for (const item of open) types.delete(item.subject);
+  types.add("supporting_document");
+  return el("div", {}, el("h3", {}, "Documents to deliver"), [...types].map((type) => el("div", { class: "request" }, el("strong", {}, subject(type)), documentUpload(type, view))));
+}
+
+function documentPanel(view) {
+  return el("section", { class: "panel" }, el("h2", {}, "Document assessment"),
+    el("p", { class: "muted" }, "Claude reports per checklist item. The application decides whether a document is complete."),
+    view.document_verdicts.map((verdict) => el("div", { class: "request" },
+      el("strong", {}, subject(verdict.type)), " ", badge(verdict.status === "complete" ? "Complete" : "Incomplete", verdict.status === "complete" ? "ok" : "bad"), ` version ${verdict.version}`,
+      verdict.problems.length > 0 && el("p", { class: "muted" }, verdict.problems.join(" ")),
+      el("ul", {}, verdict.checklist.map((entry) => el("li", {}, `${entry.present ? "Present" : "Missing"}: ${entry.item}${entry.location ? ` (${entry.location})` : ""}`))))));
 }
 
 function factChoices(item) {
@@ -389,7 +552,7 @@ function documentInput(item) {
 }
 
 function responseForm(view) {
-  const note = el("textarea", { rows: 2, placeholder: "For example: the wall is gypsum block and runs up to the ceiling.", oninput: (event) => { state.draft.note = event.target.value; } });
+  const note = el("textarea", { rows: 2, placeholder: "Optional context. This explains, but it does not prove anything.", oninput: (event) => { state.draft.note = event.target.value; } });
   note.value = state.draft.note;
   const reviewed = Boolean(view.assessment.llm_review);
   return el("div", {}, note, el("div", { class: "answer" }, el("button", {
@@ -403,7 +566,7 @@ function responseForm(view) {
         note: text,
       });
       state.draft = emptyDraft();
-      toast(reviewed ? "Information added. Rules and Claude have assessed the case again." : "Information added and reassessed by the rules.", true);
+      toast(reviewed ? "Round submitted. Rules and Claude have assessed the case again." : "Information added and reassessed by the rules.", true);
       await refresh();
     }),
   }, reviewed ? "Submit and start next round" : "Submit")),
@@ -506,7 +669,7 @@ function aiPanel(view, readOnly) {
   const review = view.assessment.llm_review;
   const panel = el("section", { class: "panel ai" }, el("h2", {}, el("span", { class: "ai-label" }, "AI review")));
   if (!review) {
-    panel.append(el("p", { class: "muted" }, "This test case runs without AI, on the rules only."));
+    panel.append(el("p", { class: "muted" }, view.modification && !view.modification.change_type ? "Claude reviews the case once the IFC model is delivered." : "This test case runs without AI, on the rules only."));
   } else if (review.status === "unavailable") {
     panel.append(el("p", {}, `No AI review obtained: ${review.reason}`));
   } else {
@@ -519,13 +682,24 @@ function aiPanel(view, readOnly) {
         panel.append(el("div", { class: "request" }, el("strong", {}, `${fact.name}: ${fact.value}`), el("div", { class: "muted" }, fact.basis)));
       }
     }
+    if (review.sources && review.sources.length) {
+      const claims = Object.fromEntries((review.citations || []).map((item) => [item.passage_id, item.claim]));
+      panel.append(el("h3", {}, "Sources consulted"), el("p", { class: "muted" }, "Retrieved for this round. They advise only; a source Claude relied on shows its claim."));
+      for (const source of review.sources) {
+        panel.append(el("div", { class: "request" },
+          el("strong", {}, source.url ? el("a", { href: source.url, target: "_blank", rel: "noopener" }, source.reference) : source.reference),
+          " ", badge(source.source === "CARDS" ? "Unverified card" : "Unverified extract", "warn"), claims[source.id] ? " " : null, claims[source.id] ? badge("Cited", "ai") : null,
+          el("div", { class: "muted" }, source.title),
+          el("div", { class: "muted" }, claims[source.id] || `${source.excerpt}…`)));
+      }
+    }
     if (review.uncertainties.length) {
       panel.append(el("details", {}, el("summary", {}, `Uncertainties (${review.uncertainties.length})`),
         el("ul", {}, review.uncertainties.map((item) => el("li", {}, item)))));
     }
     panel.append(el("p", { class: "muted" }, `Advice from ${review.model}. Rules and evidence decide.`));
   }
-  if (!readOnly && state.meta.llm_enabled) {
+  if (!readOnly && state.meta.llm_enabled && review) {
     panel.append(el("p", {}, el("button", {
       class: "ai",
       onclick: (event) => run(event.currentTarget, "Claude is reviewing…", async () => {
@@ -568,7 +742,7 @@ function describeEvent(event) {
       return { title: "Modification submitted", tag: "H0.1", text: payload.description };
     case "llm_review_recorded":
       return payload.status === "completed"
-        ? { title: `AI review, round ${payload.round}`, tag: "AI", cls: "ai", text: `${payload.summary} ${payload.information_requests.length} questions.` }
+        ? { title: `AI review, round ${payload.round}`, tag: "AI", cls: "ai", text: `${payload.summary} ${payload.information_requests.length} questions, ${(payload.sources || []).length} sources, ${(payload.citations || []).length} cited, ${(payload.document_verdicts || []).length} documents assessed.` }
         : { title: "AI review unavailable", tag: "AI", cls: "bad", text: payload.reason };
     case "assessment_recorded":
       return { title: "Rules and evidence checked", tag: "H0.2–H0.5", text: `${payload.deficiencies.length} open items, ${payload.issues.length} escalations${payload.withdrawn_flags.length ? `, ${payload.withdrawn_flags.length} AI flags withdrawn` : ""}` };
@@ -584,6 +758,8 @@ function describeEvent(event) {
       return { title: "Case moved back after new information", tag: "E5", cls: "bad", text: `Back to ${label("stage", payload.to_stage)}` };
     case "issue_resolved":
       return { title: "Escalation resolved", cls: "ok", text: `${payload.decision} (${payload.source})` };
+    case "fact_declined":
+      return { title: "Fact declined by the reviewer", cls: "bad", text: payload.name };
     case "resolution_denied":
       return { title: "Resolution refused", cls: "bad", text: label("role", payload.role) };
     default:
@@ -655,13 +831,16 @@ function ownDialog() {
 async function start() {
   state.meta = await api("/meta");
   $("role").replaceChildren(...state.meta.roles.map((role) => el("option", { value: role }, label("role", role))));
-  $("role").addEventListener("change", (event) => { state.role = event.target.value; if (state.view) render(); });
+  $("role").addEventListener("change", (event) => { state.role = event.target.value; if (state.view && state.page === "cases") render(); });
   $("own").addEventListener("click", ownDialog);
   $("own").hidden = !state.meta.llm_enabled;
   $("notice").textContent = `Demonstration: AI cases use rules derived from public sources (${state.meta.pack_version}), and fixed test cases use synthetic rules. Neither is official or complete Dubai Municipality/BPS logic. Roles are simulated and documents are fictional. RePermit does not issue permits or replace a competent authority's decision.`;
   $("scenarios").replaceChildren(...(await api("/demo/scenarios")).map(scenarioRow));
-  state.caseId = location.hash.slice(1) || null;
-  await refresh();
+  window.addEventListener("hashchange", () => route().catch((error) => toast(error.message)).finally(() => {
+    if (state.afterRoute) state.afterRoute();
+    state.afterRoute = null;
+  }));
+  await route();
 }
 
 start().catch((error) => toast(error.message));
