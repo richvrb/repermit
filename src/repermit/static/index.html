@@ -835,7 +835,9 @@ async function start() {
   $("own").addEventListener("click", ownDialog);
   $("own").hidden = !state.meta.llm_enabled;
   $("notice").textContent = `Demonstration: AI cases use rules derived from public sources (${state.meta.pack_version}), and fixed test cases use synthetic rules. Neither is official or complete Dubai Municipality/BPS logic. Roles are simulated and documents are fictional. RePermit does not issue permits or replace a competent authority's decision.`;
-  $("scenarios").replaceChildren(...(await api("/demo/scenarios")).map(scenarioRow));
+  // Cases that can run come first; without an LLM the AI cases are greyed out below them.
+  const scenarios = await api("/demo/scenarios");
+  $("scenarios").replaceChildren(...[...scenarios.filter((item) => item.available), ...scenarios.filter((item) => !item.available)].map(scenarioRow));
   window.addEventListener("hashchange", () => route().catch((error) => toast(error.message)).finally(() => {
     if (state.afterRoute) state.afterRoute();
     state.afterRoute = null;
