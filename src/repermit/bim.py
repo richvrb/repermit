@@ -13,6 +13,9 @@ STRUCTURAL_CLASSES = ("IfcColumn", "IfcBeam")
 FINISH_CLASSES = ("IfcCovering", "IfcSpace", "IfcDoor", "IfcWindow")
 PROPERTIES = ("LoadBearing", "FireRating", "IsExternal")
 MAX_LISTED_CHANGES = 50
+# Caps on what is stored per element for the model tools.
+MAX_DETAIL_VALUES = 40
+MAX_VALUE_CHARS = 120
 
 
 class InvalidModel(Exception):
@@ -32,16 +35,58 @@ def snapshot(element: Any) -> dict:
     }
 
 
+def scalar(value: Any) -> Any:
+    if isinstance(value, (bool, int, str)) or value is None:
+        return value if not isinstance(value, str) else value[:MAX_VALUE_CHARS]
+    if isinstance(value, float):
+        return round(value, 3)
+    return str(value)[:MAX_VALUE_CHARS]
+
+
+def flatten(sets: dict) -> dict:
+    """Property or quantity sets as 'Set.Name' keys, scalar values only and capped in number."""
+    flat = {}
+    for set_name, values in sets.items():
+        for name, value in values.items():
+            if name != "id" and len(flat) < MAX_DETAIL_VALUES:
+                flat[f"{set_name}.{name}"] = scalar(value)
+    return flat
+
+
+def details(element: Any) -> dict:
+    """What the review's model tools can look up; the comparison uses the snapshot only."""
+    storey = ifcopenshell.util.element.get_container(element)
+    material = ifcopenshell.util.element.get_material(element)
+    element_type = ifcopenshell.util.element.get_type(element)
+    return {
+        "storey": storey.Name if storey else None,
+        "storey_elevation": scalar(getattr(storey, "Elevation", None)) if storey else None,
+        "type": element_type.Name if element_type else None,
+        "material": getattr(material, "Name", None) if material else None,
+        "property_sets": flatten(ifcopenshell.util.element.get_psets(element, psets_only=True)),
+        "quantities": flatten(ifcopenshell.util.element.get_psets(element, qtos_only=True)),
+    }
+
+
+def storeys_of(model: Any) -> list[dict]:
+    return sorted(
+        ({"name": storey.Name, "elevation": scalar(storey.Elevation)} for storey in model.by_type("IfcBuildingStorey")),
+        key=lambda item: item["elevation"] if isinstance(item["elevation"], (int, float)) else 0,
+    )
+
+
 def read_model(content: bytes) -> dict:
-    """Parse an IFC file. Returns its summary and a snapshot per GlobalId."""
+    """Parse an IFC file. Returns its summary, a snapshot per GlobalId and details for the model tools."""
     if len(content) > MAX_MODEL_BYTES:
         raise InvalidModel("the model is larger than 50 MB")
     if not content.lstrip().startswith(b"ISO-10303-21"):
         raise InvalidModel("the file is not an IFC-SPF model")
     try:
         model = ifcopenshell.file.from_string(content.decode("utf-8", errors="replace"))
-        elements = {element.GlobalId: snapshot(element) for name in ELEMENT_CLASSES for element in model.by_type(name)}
-        storeys = len(model.by_type("IfcBuildingStorey"))
+        products = [element for name in ELEMENT_CLASSES for element in model.by_type(name)]
+        elements = {element.GlobalId: snapshot(element) for element in products}
+        extra = {element.GlobalId: details(element) for element in products}
+        storeys = storeys_of(model)
     except (RuntimeError, ValueError, AttributeError, TypeError) as error:
         raise InvalidModel(f"the IFC model could not be read: {error}") from error
     if not elements:
@@ -55,10 +100,11 @@ def read_model(content: bytes) -> dict:
             "schema": model.schema,
             "sha256": hashlib.sha256(content).hexdigest(),
             "size": len(content),
-            "storeys": storeys,
+            "storeys": len(storeys),
             "elements": dict(sorted(counts.items())),
         },
         "elements": elements,
+        "details": {"storeys": storeys, "elements": extra},
     }
 
 

@@ -31,6 +31,29 @@ def index(tmp_path):
     return path
 
 
+def test_browse_lists_and_filters_the_index(index):
+    retriever = Retriever(index)
+    everything = retriever.browse(limit=100)
+    assert everything["total"] == len(ROWS) and len(everything["items"]) == len(ROWS)
+    source = ROWS[0][1]
+    assert all(item["source"] == source for item in retriever.browse(source=source)["items"])
+    assert retriever.browse(limit=1, offset=1)["items"][0]["id"] == ROWS[1][0]
+    hits = retriever.browse(query="wall")
+    assert hits["total"] > 0 and all("wall" in item["text"].lower() for item in hits["items"])
+
+
+def test_index_endpoints(database_url, pack, index):
+    from fastapi.testclient import TestClient
+
+    from repermit.api import create_app
+
+    client = TestClient(create_app(database_url, pack, None, Retriever(index)))
+    assert client.get("/knowledge/passages", params={"limit": 2}).json()["total"] == len(ROWS)
+    assert "wall" in client.get("/knowledge/search", params={"q": "wall"}).json()["terms"]
+    without = TestClient(create_app(database_url, pack))
+    assert without.get("/knowledge/passages").status_code == 404
+
+
 def found(retriever, query="wall", authority=None):
     return [item["id"] for item in retriever.search(query, authority)]
 

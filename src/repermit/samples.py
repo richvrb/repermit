@@ -292,6 +292,73 @@ CASE_DOCUMENTS = {
 }
 
 
+# How a consultant would state each fact, as it is true and as it is not.
+STATEMENTS = {
+    "load_bearing": ("The works affect a load-bearing element of the building.", "The works do not affect any load-bearing element."),
+    "fire_compartment_boundary": ("The works affect a fire separation or compartment boundary.", "No fire separation or compartment boundary is affected."),
+    "safety_systems_changed": ("The works change a fire or life safety system.", "No fire or life safety system is changed."),
+    "affects_egress": ("The works affect escape routes or systems outside the unit.", "Escape routes and systems outside the unit are not affected."),
+    "decoration_works": ("The works include interior decoration or fit-out.", "The works include no interior decoration or fit-out."),
+    "non_residential_unit": ("The unit concerned is not residential.", "The unit concerned is residential."),
+    "in_commercial_centre": ("The unit is in a commercial centre.", "The unit is not in a commercial centre."),
+    "unit_over_100m2": ("The unit concerned is larger than 100 m2.", "The unit concerned is 100 m2 or smaller."),
+    "changes_unit_boundary": ("The works change a unit boundary or add, remove, merge or split space.", "No unit boundary changes and no space is added, removed, merged or split."),
+    "heritage_area": ("The building is in a heritage area.", "The building is not in a heritage area."),
+    "facade_change": ("The works change the facade or the external elevation.", "The facade and external elevation are not changed."),
+    "historical_building": ("The building is a listed historical building.", "The building is not a listed historical building."),
+    "relies_on_existing_building": ("The new works rely on the existing structure for support or access.", "The new works do not rely on the existing structure."),
+    "exceeds_zoning": ("The works exceed the planning parameters for the plot.", "The works stay within the planning parameters for the plot (GFA, parking, height, setbacks and use)."),
+    "simple_maintenance": ("The works are limited to simple maintenance.", "The works are not limited to simple maintenance."),
+    "planning_use_change": ("The works change the planned land use.", "The planned land use does not change."),
+    "building_completed": ("A completion certificate has been issued for this building.", "No completion certificate has been issued for this building yet."),
+}
+
+# What a document says for each checklist entry.
+ENTRIES = {
+    "Project and unit identification": "Tower 7, Dubai, the unit concerned by this case",
+    "Project and plot identification": "Tower 7, plot 7-001, Dubai",
+    "Project identification": "Tower 7, plot 7-001, Dubai",
+    "Project concerned": "Tower 7, plot 7-001, Dubai",
+    "Project and element identification": "Tower 7, plot 7-001: the elements changed in revision B",
+    "Building identification": "Tower 7, plot 7-001, Dubai",
+    "Building or plot identification": "Tower 7, plot 7-001, Dubai",
+    "Plot identification": "Plot 7-001, Dubai",
+    "Plot or building identification": "Tower 7, plot 7-001, Dubai",
+    "Unit identification": "The unit concerned by this case in Tower 7",
+    "Unit or building concerned": "The unit concerned by this case in Tower 7",
+    "Design revision": "Revision B",
+    "Name and licence of the consultant": "Atlas Consulting Engineers, licence 7788",
+    "Name of the structural engineer": "R. Haddad, Atlas Consulting Engineers, licence 7788-S",
+    "Name of the author": "Atlas Consulting Engineers",
+    "Name of the owner": "Tower 7 Holdings",
+    "Date and signature or stamp": "1 October 2026, signed and stamped by the consultant",
+    "Date and signature": "1 October 2026, signed by the authorised person",
+    "Consultant's stamp": "Stamped by Atlas Consulting Engineers",
+    "Issuing authority": "The competent authority",
+    "Issuer and date": "Atlas Consulting Engineers, 1 October 2026",
+    "Issue date": "12 March 2014",
+    "Certificate number": "CC-2014-0457",
+    "Reference number and date": "Reference 2026-1187, 1 October 2026",
+    "Licence number and date": "Licence 2026-0932, 3 October 2026",
+    "Description of the works": "The works described in revision B of the design, as listed in the modification request",
+    "Description of the approved works": "The works described in revision B of the design",
+    "Affected areas": "Only the areas changed in revision B; all other areas stay as approved",
+    "Approved areas": "As in the approved revision A drawings",
+    "Proposed areas": "As in the revision B drawings, with the changed areas marked",
+    "Approved situation": "Drawings A-101 to A-112, revision A",
+    "Proposed situation with the changes marked": "Drawings A-101 to A-112, revision B, with the changes clouded",
+    "Assessed parts of the existing building": "The structure and the access routes next to the works",
+    "Assessment of egress and systems": "Escape routes, stairs and shared systems next to the works were checked",
+    "Loads and calculation results": "Design loads to the Dubai Building Code; all checked members pass",
+    "Conclusion": "The works can be carried out as described in revision B",
+    "Statement of no objection": "The owner has no objection to the works in revision B",
+    "Approved deviation": "The deviation described in revision B is approved",
+    "Approved facade works": "The facade works in revision B are approved",
+    "Approved parameter change": "The parameter change in revision B is approved",
+    "Approved use": "The use described in revision B is approved",
+}
+
+
 def pdf_escape(line: str) -> str:
     return line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
@@ -323,28 +390,16 @@ def sample_document(scenario_id: str, document_type: str, incomplete: bool = Fal
     if scenario_id not in CASE_DOCUMENTS or document_type not in pack.documents:
         raise UnknownItem(f"no {document_type} sample for {scenario_id}")
     facts, narrative = CASE_DOCUMENTS[scenario_id]
+    known = {**BASE_FACTS, "building_completed": True, **facts}
     items = pack.documents[document_type].must_contain[:-1 if incomplete else None]
-    values = {
-        "Project and unit identification": "Tower 7, Dubai, the unit concerned by this case",
-        "Project and plot identification": "Tower 7, plot 7-001, Dubai",
-        "Design revision": "Revision B",
-        "Name and licence of the consultant": "Atlas Consulting Engineers, licence 7788",
-        "Name of the owner": "Tower 7 Holdings",
-        "Date and signature or stamp": "1 October 2026, signed and stamped by the consultant",
-        "Date and signature": "1 October 2026, signed by the authorised person",
-        "Issuing authority": "the competent authority",
-        "Reference number and date": "Reference 2026-1187, 1 October 2026",
-        "Consultant's stamp": "Stamped by Atlas Consulting Engineers",
-    }
     lines = ["[SYNTHETIC DEMONSTRATION DOCUMENT]", pack.labels.get(document_type, document_type.replace("_", " ").title()), ""]
-    lines += [f"{item}: {values.get(item, 'As set out for this case in revision B of Tower 7.')}" for item in items if item != "Consultant's statement on each listed subject"]
+    lines += [f"{item}: {ENTRIES[item]}" for item in items if item != "Consultant's statement on each listed subject"]
+    # A statement is written in sentences, one per subject, as a consultant would put it.
     if document_type == "consultant_statement" and not incomplete:
         lines += ["", "Consultant's statement on each listed subject:"]
-        lines += [f"{name}: {'yes' if {**BASE_FACTS, **facts}[name] else 'no'}" for name in BASE_FACTS]
-    if document_type == "completion_certificate":
-        lines.append("A completion certificate has been issued for this building: yes")
+        lines += [f"- {STATEMENTS[name][0 if known[name] else 1]}" for name in BASE_FACTS]
     for name in pack.documents[document_type].proves if document_type != "consultant_statement" else []:
-        lines.append(f"{name}: {'yes' if {**BASE_FACTS, **facts}.get(name, True) else 'no'}")
+        lines.append(STATEMENTS[name][0 if known.get(name, True) else 1])
     if document_type in ("supporting_document", "consultant_statement"):
         lines += ["", narrative]
     return simple_pdf(lines)

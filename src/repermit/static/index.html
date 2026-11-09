@@ -106,6 +106,24 @@ dl.basis ul li { border-left: 0; padding-left: 0; margin: 0 0 2px; }
 #toast.ok { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
 dialog { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; width: min(520px, calc(100% - 32px)); }
 dialog label { display: block; margin-top: 10px; font-size: 14px; }
+dialog { max-height: calc(100vh - 32px); overflow-y: auto; }
+.kb { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; align-items: start; }
+.kb-sources { display: grid; gap: 2px; max-height: 75vh; overflow-y: auto; }
+.kb-sources button, .kb-row { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 6px 8px; border-radius: 6px; }
+.kb-sources button { display: flex; justify-content: space-between; gap: 8px; }
+.kb-sources button span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-sources button.active, .kb-row.active { background: var(--info-bg); }
+.kb-search { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.kb-search input { flex: 1 1 200px; }
+.kb-snippet { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-pager { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.kb-detail { position: sticky; top: 12px; max-height: 80vh; overflow-y: auto; }
+.kb-detail h3 { margin-top: 0; }
+.kb-text { white-space: pre-wrap; line-height: 1.5; font-size: 14px; }
+@media (max-width: 900px) { .kb { grid-template-columns: 1fr; } .kb-sources { max-height: none; } .kb-detail { position: static; max-height: none; } }
+dialog details summary { cursor: pointer; margin-top: 10px; }
+dialog label.check { display: flex; gap: 8px; align-items: flex-start; margin-top: 6px; }
+dialog label.check input { width: auto; margin-top: 3px; }
 dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 @media (max-width: 900px) {
   .layout { grid-template-columns: minmax(0, 1fr); padding: 12px 16px; }
@@ -157,8 +175,9 @@ const LABELS = {
   },
   autonomy: { autonomous: "May run automatically", human_review: "Human review required", human_only: "Humans only" },
   role: { consultant: "Consultant", coordinator: "Coordinator", authority: "Authority", observer: "Observer" },
-  issue: { rule_conflict: "Rules contradict each other", process_gap: "Process gap", retrieval_gap: "Not covered by the rules", llm_flag: "AI sees a risk outside the rules", llm_unavailable: "AI review unavailable" },
-  deficiency: { missing: "Missing", insufficient: "Insufficient", outdated: "Expired", revision_unknown: "Revision unknown", stale_revision: "Belongs to an old revision", unknown_fact: "Not yet known", inconsistent_fact: "Contradictory", ai_question: "AI question", document_pending: "Waiting for assessment", document_incomplete: "Incomplete", fact_to_confirm: "Reviewer must confirm" },
+  issue: { rule_conflict: "Rules contradict each other", process_gap: "Process gap", retrieval_gap: "Not covered by the rules", llm_flag: "AI sees a risk outside the rules", llm_unavailable: "AI review unavailable", ai_stopped: "AI review stopped: a reviewer takes over" },
+  aiStop: { round_limit: "the review round limit is reached", case_budget: "the AI budget of this case is spent", daily_budget: "the daily AI budget is spent" },
+  deficiency: { missing: "Missing", insufficient: "Insufficient", outdated: "Expired", revision_unknown: "Revision unknown", stale_revision: "Belongs to an old revision", unknown_fact: "Not yet known", inconsistent_fact: "Contradictory", ai_question: "AI question", document_pending: "Waiting for assessment", document_incomplete: "Incomplete", fact_to_confirm: "Answer read from a document" },
   impact: { retained: "Still valid", review: "Check", revalidate: "Revalidate" },
   subject: {
     floor_plan: "Floor plan", design_model: "Design model (IFC)", baseline_model: "Baseline model (IFC)", fire_strategy: "Fire strategy", structural_assessment: "Structural assessment",
@@ -317,7 +336,8 @@ function tabSections(view, readOnly) {
   if (state.tab === "model" && view.bim_required) return [bimPanel(view, readOnly)];
   if (state.tab === "flow") return [flowPanel()];
   if (state.tab === "documents") {
-    const panels = [view.document_verdicts.length ? documentPanel(view) : null, view.evidence.length ? evidencePanel(view) : null].filter(Boolean);
+    const documents = view.evidence.some((item) => item.document && view.document_specs[item.type]);
+    const panels = [documents ? documentPanel(view, readOnly) : null, view.evidence.length ? evidencePanel(view) : null].filter(Boolean);
     return panels.length ? panels : [el("div", { class: "panel muted" }, "No documents yet.")];
   }
   if (!view.assessment) return [el("div", { class: "panel muted" }, "At this point the rules have not assessed the modification yet. Choose a later step in the flow.")];
@@ -332,7 +352,7 @@ function render() {
   $("main").replaceChildren(headerPanel(view, readOnly), caseTabs(view), ...tabSections(view, readOnly));
 }
 
-const PAGES = { cases: "Cases", rules: "Rules", sources: "Sources" };
+const PAGES = { cases: "Cases", rules: "Rules", sources: "Sources", knowledge: "Knowledge", settings: "Settings" };
 
 function renderNav() {
   $("nav").replaceChildren(...Object.entries(PAGES).map(([key, text]) => el("a", { href: key === "cases" ? "#/" : `#/${key}`, class: state.page === key ? "active" : "" }, text)),
@@ -379,13 +399,200 @@ async function renderSourcesPage() {
       table(["Reference", "Authority", "Text"], data.cards.map((card) => [sourceLink(card.reference, card.url), card.jurisdiction, card.text]))));
 }
 
+// The knowledge index in three columns: sources, a page of passages, and the passage being read.
+const KB_PAGE = 20;
+const kb = { source: null, q: "", mode: "all", authority: "", offset: 0, selected: null, info: null };
+
+async function renderKnowledgePage() {
+  if (!kb.info) {
+    const [settings, knowledge] = await Promise.all([api("/settings"), api("/knowledge")]);
+    kb.info = { index: settings.retrieval.index, available: settings.retrieval.available, sources: Object.fromEntries(knowledge.sources.map((item) => [item.id, item])), cards: knowledge.cards };
+  }
+  const { index, available, sources, cards } = kb.info;
+  if (!available) {
+    $("page").replaceChildren(el("section", { class: "panel" }, el("h2", {}, "Knowledge"),
+      el("p", { class: "muted" }, "No search index is available on this server, so there are no source passages to show. These knowledge cards are available:"),
+      table(["Reference", "Authority", "Text"], cards.map((card) => [sourceLink(card.reference, card.url), card.jurisdiction, card.text]))));
+    return;
+  }
+  const total = Object.values(index).reduce((sum, count) => sum + count, 0);
+  const title = (id) => (id === "CARDS" ? "Knowledge cards (unverified)" : (sources[id] && sources[id].title) || id);
+  const shown = (id) => { kb.source = id; kb.offset = 0; kb.selected = null; renderKnowledgePage(); };
+
+  const left = el("nav", { class: "kb-sources", "aria-label": "Sources" },
+    el("button", { class: kb.source ? "" : "active", onclick: () => shown(null) }, el("span", {}, "All sources"), el("span", { class: "muted" }, total.toLocaleString("en"))),
+    Object.entries(index).sort(([, a], [, b]) => b - a).map(([id, count]) =>
+      el("button", { class: kb.source === id ? "active" : "", title: title(id), onclick: () => shown(id) }, el("span", {}, title(id)), el("span", { class: "muted" }, count.toLocaleString("en")))));
+
+  const query = el("input", { type: "search", value: kb.q, placeholder: "Search the passages, for example fire separation", "aria-label": "Search" });
+  const mode = el("select", { "aria-label": "What to show" },
+    el("option", { value: "all", selected: kb.mode === "all" }, "All matches"),
+    el("option", { value: "ai", selected: kb.mode === "ai" }, "What the AI would receive"));
+  const authority = el("select", { "aria-label": "Authority", hidden: kb.mode !== "ai" },
+    [["", "Any authority"], ["dda", "DDA"], ["dm", "Dubai Municipality"]].map(([value, text]) => el("option", { value, selected: kb.authority === value }, text)));
+  const go = () => { kb.q = query.value; kb.mode = mode.value; kb.authority = authority.value; kb.offset = 0; kb.selected = null; renderKnowledgePage(); };
+  query.addEventListener("keydown", (event) => { if (event.key === "Enter") go(); });
+  mode.addEventListener("change", go);
+  authority.addEventListener("change", go);
+
+  let items, footer;
+  if (kb.mode === "ai" && kb.q.trim()) {
+    const result = await api(`/knowledge/search?${new URLSearchParams({ q: kb.q, ...(kb.authority ? { authority: kb.authority } : {}) })}`);
+    items = result.passages.filter((item) => !kb.source || item.source === kb.source);
+    footer = el("p", { class: "muted" }, `${items.length} passages pass the relevance thresholds and the limits set on the Settings page. Search terms: ${result.terms.join(", ") || "none"}.`);
+  } else {
+    const params = new URLSearchParams({ offset: kb.offset, limit: KB_PAGE, ...(kb.source ? { source: kb.source } : {}), ...(kb.q.trim() ? { q: kb.q } : {}) });
+    const result = await api(`/knowledge/passages?${params}`);
+    items = result.items;
+    const page = (offset) => () => { kb.offset = offset; kb.selected = null; renderKnowledgePage(); };
+    footer = el("div", { class: "kb-pager" },
+      el("button", { disabled: kb.offset === 0, onclick: page(Math.max(kb.offset - KB_PAGE, 0)) }, "Previous"),
+      el("span", { class: "muted" }, result.total ? `${kb.offset + 1}–${kb.offset + items.length} of ${result.total.toLocaleString("en")}` : "No passages found"),
+      el("button", { disabled: kb.offset + KB_PAGE >= result.total, onclick: page(kb.offset + KB_PAGE) }, "Next"));
+    if (kb.mode === "ai") footer.append(el("p", { class: "muted" }, "Type a description of a case to see which passages the AI would receive."));
+  }
+  if (!kb.selected && items.length) kb.selected = items[0];
+
+  const middle = el("div", { class: "kb-list" }, el("div", { class: "kb-search" }, query, mode, authority, el("button", { class: "primary", onclick: go }, "Search")),
+    el("div", {}, items.map((item) => el("button", { class: `kb-row ${kb.selected && kb.selected.id === item.id ? "active" : ""}`, onclick: () => { kb.selected = item; renderKnowledgePage(); } },
+      el("strong", {}, item.reference), " ", el("span", { class: "muted" }, title(item.source)),
+      el("div", { class: "kb-snippet" }, (item.text || item.excerpt || "").slice(0, 110))))),
+    footer);
+
+  const passage = kb.selected;
+  const right = el("article", { class: "kb-detail" }, passage
+    ? [el("h3", {}, passage.reference), el("p", { class: "muted" }, title(passage.source)),
+      // Retrieval results only keep passages that apply and are in force, so they carry neither field.
+      el("p", {}, passage.jurisdiction ? [badge(passage.jurisdiction === "all" ? "Any authority" : passage.jurisdiction.toUpperCase(), "info"), " "] : null,
+        passage.status ? [badge(passage.status === "current" ? "In force" : "Superseded", passage.status === "current" ? "ok" : "bad"), " "] : null,
+        passage.source === "CARDS" ? badge("Unverified paraphrase", "warn") : null),
+      passage.url ? el("p", {}, el("a", { href: passage.url, target: "_blank", rel: "noopener" }, "Open the original source")) : null,
+      el("div", { class: "kb-text" }, passage.text || passage.excerpt || "")]
+    : el("p", { class: "muted" }, "Choose a passage to read it."));
+
+  $("page").replaceChildren(el("section", { class: "panel" },
+    el("h2", {}, "Knowledge"),
+    el("p", { class: "muted" }, `${total.toLocaleString("en")} passages from ${Object.keys(index).length} sources. Internal use only: the full source texts may not be shown outside under their reuse terms. Passages advise the AI; rules and evidence decide.`),
+    el("div", { class: "kb" }, left, middle, right)));
+}
+
+const TASKS = [
+  ["review", "Review", "Classifies the modification, assesses the domains and asks for information."],
+  ["documents", "Document check", "Checks new documents against their checklist and reads the facts they prove. Without a model, the review does this itself."],
+];
+
+function retrievalSection(data, inputs) {
+  const rag = data.retrieval;
+  if (!rag.available) {
+    return el("section", { class: "panel" }, el("h2", {}, "Knowledge retrieval (RAG)"),
+      el("p", { class: "muted" }, "No search index is available on this server, so reviews run without source passages. Build it with python -m repermit.ingest."));
+  }
+  const sources = Object.fromEntries((state.knowledge ? state.knowledge.sources : []).map((source) => [source.id, source]));
+  const total = Object.values(rag.index).reduce((sum, count) => sum + count, 0);
+  const { passages, cards, max_per_source: perSource } = rag.thresholds;
+  return el("section", { class: "panel" }, el("h2", {}, "Knowledge retrieval (RAG)"),
+    el("p", { class: "muted" }, `${rag.method}. Before each review, passages matching the case are added to the prompt: more passages give the AI more context, and make each review longer and more expensive. Passages advise only; rules and evidence decide.`),
+    table(["Setting", "Value", "Limit"], [
+      [el("strong", {}, "Use retrieval"), el("label", { class: "check" }, inputs.retrieval_enabled, " Add source passages to reviews"), "–"],
+      [el("strong", {}, "Passages per review"), inputs.retrieval_passages, `0 to ${rag.max_passages}`],
+      [el("strong", {}, "Knowledge cards per review"), inputs.retrieval_cards, `0 to ${rag.max_cards}`],
+    ]),
+    el("p", { class: "muted" }, `Fixed relevance thresholds: a passage must score at least ${passages.relative * 100}% of the best match and share ${passages.matched} search terms (cards: ${cards.relative * 100}% and ${cards.matched}), with at most ${perSource} passages from one source.`),
+    el("details", {}, el("summary", {}, `Index: ${total.toLocaleString("en")} passages from ${Object.keys(rag.index).length} sources`),
+      table(["Source", "Passages", "Status"], Object.entries(rag.index).sort(([, a], [, b]) => b - a).map(([id, count]) => [
+        sources[id] ? sourceLink(sources[id].title, sources[id].url) : id === "CARDS" ? "Knowledge cards (unverified)" : id,
+        count.toLocaleString("en"),
+        !sources[id] ? "–" : sources[id].enabled ? badge("On", "ok") : badge("Off"),
+      ])),
+      el("p", { class: "muted" }, "Switching a source on or off is done in sources.yaml on the server; see the Sources page.")));
+}
+
+async function renderSettingsPage() {
+  const [data, knowledge] = await Promise.all([api("/settings"), api("/knowledge")]);
+  state.knowledge = knowledge;
+  const current = data.current;
+  const editable = data.models_editable;
+  const choice = (values, selected, empty) => el("select", { disabled: !editable },
+    empty ? el("option", { value: "", selected: !selected }, empty) : null,
+    values.map((value) => el("option", { value, selected: value === selected }, value)));
+  const fields = {
+    review_model: choice(data.allowed_models.includes(current.review_model) || !current.review_model ? data.allowed_models : [current.review_model, ...data.allowed_models], current.review_model),
+    review_effort: choice(data.efforts, current.review_effort),
+    documents_model: choice(data.allowed_models, current.documents_model, "Read within the review"),
+    documents_effort: choice(data.efforts, current.documents_effort),
+  };
+  const budget = (name) => el("input", { type: "number", min: "0", step: "0.05", max: data.ceilings[name] ?? undefined, value: current[name] ?? "" });
+  const toolCalls = el("input", { type: "number", min: "0", step: "1", max: String(data.max_tool_calls), value: current.review_tool_calls ?? 0, disabled: !editable });
+  const budgets = { case_budget_usd: budget("case_budget_usd"), daily_budget_usd: budget("daily_budget_usd") };
+  const rag = {
+    retrieval_enabled: el("input", { type: "checkbox", style: "width:auto" }),
+    retrieval_passages: el("input", { type: "number", min: "0", step: "1", max: String(data.retrieval.max_passages), value: current.retrieval_passages ?? "" }),
+    retrieval_cards: el("input", { type: "number", min: "0", step: "1", max: String(data.retrieval.max_cards), value: current.retrieval_cards ?? "" }),
+  };
+  rag.retrieval_enabled.checked = Boolean(current.retrieval_enabled);
+  const save = el("button", {
+    class: "primary",
+    onclick: (event) => run(event.currentTarget, "Saving…", async () => {
+      await api("/settings", "PUT", {
+        review_model: fields.review_model.value || null, review_effort: fields.review_effort.value || null,
+        documents_model: fields.documents_model.value || null, documents_effort: fields.documents_effort.value,
+        ...(editable ? { review_tool_calls: Number(toolCalls.value) } : {}),
+        case_budget_usd: Number(budgets.case_budget_usd.value), daily_budget_usd: Number(budgets.daily_budget_usd.value),
+        ...(data.retrieval.available ? {
+          retrieval_enabled: rag.retrieval_enabled.checked,
+          retrieval_passages: Number(rag.retrieval_passages.value), retrieval_cards: Number(rag.retrieval_cards.value),
+        } : {}),
+        actor_id: "demo-user", role: state.role,
+      });
+      state.meta = await api("/meta");
+      toast("Settings saved. They apply to the next AI call.", true);
+      await renderSettingsPage();
+    }),
+  }, "Save settings");
+  const money = (value) => (value == null ? "no limit" : `$${Number(value).toFixed(2)}`);
+  $("page").replaceChildren(
+    el("section", { class: "panel" }, el("h2", {}, "AI models"),
+      el("p", { class: "muted" }, !data.llm_enabled
+        ? "The AI is switched off on this server (REPERMIT_LLM_PROVIDER=none). Only the budgets can be set."
+        : editable ? "Choose a model and effort per task. Only models allowed on the server can be chosen." : "Models are fixed in this configuration."),
+      table(["Task", "What it does", "Model", "Effort"], TASKS.map(([key, name, text]) => [el("strong", {}, name), text, fields[`${key}_model`], fields[`${key}_effort`]]))),
+    el("section", { class: "panel" }, el("h2", {}, "BIM model tools"),
+      el("p", { class: "muted" }, "During the review, Claude can look things up in the IFC models itself: an overview of storeys and elements, elements by class, storey, name or property, all details of one element, and what lies near it. Claude decides which tools to call; the application runs them and only reads the models. Each call is another turn of the review, so it adds cost, partly offset by prompt caching. Every call is listed in the flow."),
+      table(["Setting", "Value", "Limit"], [[el("strong", {}, "Tool calls per review"), toolCalls, `0 to ${data.max_tool_calls}; 0 switches the tools off`]]),
+      el("h3", {}, `Available tools (${data.bim_tools.length})`),
+      table(["Tool", "What it does", "Input"], data.bim_tools.map((tool) => [
+        el("code", {}, tool.name),
+        tool.description,
+        el("ul", {}, Object.entries(tool.inputs).map(([name, text]) => el("li", {}, el("code", {}, name), `: ${text}`))),
+      ]))),
+    retrievalSection(data, rag),
+    el("section", { class: "panel" }, el("h2", {}, "Budgets"),
+      el("p", { class: "muted" }, "Once a budget is spent, no further AI calls are made and the case goes to a reviewer. The server sets the maximum; here you can only stay at or below it."),
+      table(["Budget", "Value (USD)", "Server maximum"], [
+        [el("strong", {}, "Per case"), budgets.case_budget_usd, money(data.ceilings.case_budget_usd)],
+        [el("strong", {}, "Per day, all cases (UTC)"), budgets.daily_budget_usd, money(data.ceilings.daily_budget_usd)],
+      ]),
+      el("p", {}, save, " ", el("span", { class: "muted" }, `Saved as ${label("role", state.role)}. There is no login yet, so anyone with access can change these within the limits.`))),
+    el("section", { class: "panel" }, el("h2", {}, "Recent changes"),
+      data.history.length
+        ? table(["When", "Who", "Review", "Documents", "Retrieval", "Budgets"], data.history.map((item) => [
+          new Date(item.at).toLocaleString("en-GB"), `${item.actor_id} (${label("role", item.role)})`,
+          `${item.settings.review_model || "–"} (${item.settings.review_effort || "–"})${item.settings.review_tool_calls ? `, ${item.settings.review_tool_calls} BIM tool calls` : ""}`,
+          item.settings.documents_model ? `${item.settings.documents_model} (${item.settings.documents_effort})` : "Within the review",
+          item.settings.retrieval_passages == null ? "–" : item.settings.retrieval_enabled ? `${item.settings.retrieval_passages} passages, ${item.settings.retrieval_cards} cards` : "Off",
+          `${money(item.settings.case_budget_usd)} per case, ${money(item.settings.daily_budget_usd)} per day`,
+        ]))
+        : el("p", { class: "muted" }, "No changes yet: the server's settings apply.")));
+}
+
 async function route() {
   const [page, id, tab] = location.hash.replace(/^#\/?/, "").split("/");
   stopPlaying();
-  if (page === "rules" || page === "sources") {
+  const pages = { rules: renderRulesPage, sources: renderSourcesPage, knowledge: renderKnowledgePage, settings: renderSettingsPage };
+  if (pages[page]) {
     state.page = page;
     renderNav();
-    await (page === "rules" ? renderRulesPage() : renderSourcesPage());
+    await pages[page]();
     return;
   }
   state.page = "cases";
@@ -453,66 +660,230 @@ function informationPanel(view, readOnly) {
   const heading = view.review_round ? `Round ${view.review_round} of at most ${view.max_review_rounds}: open items` : "Open items";
   const panel = el("section", { class: "panel" }, el("h2", {}, heading));
   if (!deficiencies.length && !issues.length) panel.append(el("p", { class: "muted" }, "There are no open items."));
-  for (const item of deficiencies) panel.append(deficiencyRow(item, view, readOnly));
-  for (const issue of issues) panel.append(issueRow(issue, view, readOnly));
-  if (!readOnly && view.document_types.length) panel.append(documentRequests(view));
-  if (!readOnly) panel.append(el("h3", {}, "Add more information"), responseForm(view));
+  else {
+    panel.append(openSummary(view), el("p", { class: "muted" }, `You act as ${label("role", state.role)}; change this under Acting as, top right.`));
+    if (!readOnly) {
+      const all = confirmAllButton(view);
+      if (all) panel.append(all);
+    }
+    // A document asked for by several items gets one upload, at the first of them.
+    const offered = new Set();
+    for (const item of deficiencies) panel.append(deficiencyRow(item, view, readOnly, offered));
+    for (const issue of issues) panel.append(issueRow(issue, view, readOnly));
+  }
+  if (!readOnly) {
+    panel.append(el("h3", {}, "Add more information"));
+    if (view.document_types.includes("supporting_document")) {
+      panel.append(el("div", { class: "request" }, el("strong", {}, "Another document"), el("div", { class: "muted" }, "Anything that supports the case but was not asked for."), documentUpload(["supporting_document"], view)));
+    }
+    panel.append(responseForm(view));
+  }
   return panel;
 }
 
-const usesDocuments = (view) => view.document_types.length > 0;
+// Who has to act on an open item, so each row can offer that person's action.
+function actorOf(item) {
+  if (item.code === "fact_to_confirm") return "reviewer";
+  if (item.code === "document_pending") return "round";
+  return "applicant";
+}
+
+// The document types that would settle an item, if the pack works with documents.
+function documentsFor(item, view) {
+  const known = (type) => view.document_types.includes(type);
+  if (known(item.subject)) return [item.subject];
+  if (item.code === "ai_question") return item.document && known(item.document) ? [item.document] : [];
+  return (item.documents || []).filter(known);
+}
+
+function openSummary(view) {
+  const { deficiencies, issues } = view.assessment;
+  const count = (items, test) => items.filter(test).length;
+  const plural = (number, word) => `${number} ${word}${number === 1 ? "" : "s"}`;
+  const applicant = deficiencies.filter((item) => actorOf(item) === "applicant");
+  const uploads = count(applicant, (item) => documentsFor(item, view).length > 0 && item.subject !== "design_model");
+  const parts = [];
+  if (applicant.length) {
+    const answers = applicant.length - uploads;
+    parts.push(`For the applicant: ${[uploads && `${uploads} to prove with a document`, answers && `${answers} to answer or deliver otherwise`].filter(Boolean).join(", ")}.`);
+  }
+  const confirmations = count(deficiencies, (item) => actorOf(item) === "reviewer");
+  if (confirmations || issues.length) {
+    parts.push(`For ${confirmers()}: ${[confirmations && `${plural(confirmations, "answer")} to confirm`, issues.length && `${plural(issues.length, "escalation")} to resolve`].filter(Boolean).join(", ")}.`);
+  }
+  const pending = count(deficiencies, (item) => actorOf(item) === "round");
+  if (pending) parts.push(`${plural(pending, "document")} assessed when this round is submitted.`);
+  return el("p", { class: "muted" }, parts.join(" "));
+}
+
 const unreviewed = (view, type) => view.evidence.some((item) => item.type === type && item.document
   && !view.document_verdicts.some((verdict) => verdict.evidence_id === item.evidence_id && verdict.version === item.version));
 
-function deficiencyRow(item, view, readOnly) {
-  const row = el("div", { class: "request" },
-    el("div", {}, el("strong", {}, item.question || subject(item.subject)), " ", badge(label("deficiency", item.code), item.code === "ai_question" ? "ai" : "warn")),
-    item.domain && el("span", { class: "muted" }, label("domain", item.domain)),
-    item.code === "ai_question" && el("div", { class: "muted" }, item.detail),
-    item.code === "document_incomplete" && el("div", { class: "muted" }, item.detail));
-  if (item.documents && item.documents.length) row.append(el("div", { class: "muted" }, `Prove with: ${item.documents.map(subject).join(" or ")}`));
-  if (item.document) row.append(el("div", { class: "muted" }, `Requested document: ${subject(item.document)}`));
-  if (item.code === "fact_to_confirm") row.append(factConfirmation(item, view, readOnly));
+// One sentence that says what is wrong, in place of the internal code.
+function itemHeadline(item) {
+  const name = subject(item.subject);
+  const sentences = {
+    missing: `${name} is missing`,
+    document_incomplete: `${name} is not complete`,
+    document_pending: `${name} has not been assessed yet`,
+    outdated: `${name} has expired`,
+    insufficient: `${name} cannot be used`,
+    stale_revision: `${name} belongs to an older design revision`,
+    revision_unknown: `${name} does not state its design revision`,
+  };
+  return sentences[item.code] || item.question || name;
+}
+
+function itemStatus(item) {
+  if (item.code === "fact_to_confirm") return mayConfirm() ? badge("Check this answer", "info") : badge(`Waiting for ${confirmers()}`, "info");
+  if (item.code === "document_pending") return badge("Submit the round", "info");
+  if (item.code === "ai_question") return badge("Question from the AI", "ai");
+  if (item.code === "document_incomplete") return badge("Not complete", "bad");
+  if (item.code === "missing") return badge("Missing", "bad");
+  if (item.code === "inconsistent_fact") return badge("Contradictory", "bad");
+  return badge(label("deficiency", item.code), "warn");
+}
+
+// Document text reads as data when it is an internal field name, as in older sample documents.
+const plainQuote = (quote) => (quote && !/^[a-z_]+\s*:\s*\S+$/i.test(quote.trim()) ? quote : null);
+
+// What is behind an item: why it is needed, what was found and where.
+function itemDetails(item, view, readOnly) {
+  const lines = [];
+  const types = documentsFor(item, view);
+  if (item.domain) lines.push(el("p", {}, `Needed for: ${label("domain", item.domain)}.`));
+  if (item.code === "unknown_fact") lines.push(el("p", {}, "The rules need this answer to decide which requirements apply.", types.length ? ` It can be proven with: ${types.map(subject).join(" or ")}.` : ""));
+  if (item.code === "missing") lines.push(el("p", {}, "A rule that applies to this modification requires this document."));
+  if (["ai_question", "inconsistent_fact"].includes(item.code)) lines.push(el("p", {}, item.detail));
+  if (item.code === "document_pending") lines.push(el("p", {}, "It was uploaded and is checked against its checklist when you submit the round."));
+  if (item.code === "document_incomplete") {
+    const verdict = view.document_verdicts.find((entry) => entry.type === item.subject);
+    if (verdict && verdict.missing.length) lines.push(el("p", {}, "Missing from the document:"), el("ul", {}, verdict.missing.map((entry) => el("li", {}, entry))));
+    if (verdict && verdict.problems.length) lines.push(el("p", {}, "Problems found:"), el("ul", {}, verdict.problems.map((entry) => el("li", {}, entry))));
+    if (!verdict) lines.push(el("p", {}, item.detail));
+  }
+  if (item.code === "fact_to_confirm") {
+    const quote = plainQuote(item.reading.quote);
+    if (quote) lines.push(el("p", {}, "Text in the document: ", el("q", {}, quote)));
+    lines.push(el("p", {}, `The AI read this answer from the ${subject(item.reading.document)}. It only counts once ${confirmers()} confirms it; declining it keeps the question open.`));
+    if (!readOnly && !mayConfirm() && view.document_types.includes(item.reading.document)) {
+      lines.push(el("p", {}, `If the answer is wrong, upload a corrected ${subject(item.reading.document)}:`), documentUpload([item.reading.document], view));
+    }
+  }
+  const evidence = item.code === "fact_to_confirm" ? item.reading.evidence_id : (view.evidence.find((entry) => entry.type === item.subject && entry.document) || {}).evidence_id;
+  const link = evidence && documentLink(view, evidence, "Open the document");
+  if (link) lines.push(el("p", {}, link));
+  return lines.length ? el("details", {}, el("summary", {}, "Details"), lines) : null;
+}
+
+function deficiencyRow(item, view, readOnly, offered = new Set()) {
+  const row = el("div", { class: "request" }, el("div", {}, el("strong", {}, itemHeadline(item)), " ", itemStatus(item)));
+  if (item.code === "fact_to_confirm") {
+    row.append(el("p", {}, `The ${subject(item.reading.document)} says: `, el("strong", {}, answerText(item, item.reading.value))));
+  }
+  const details = itemDetails(item, view, readOnly);
+  if (details) row.append(details);
   if (readOnly) return row;
-  if (item.code === "ai_question") row.append(answerInput(item));
-  else if (item.subject === "design_model") row.append(el("p", { class: "muted" }, "Upload the IFC file in the BIM model panel."));
-  else if (item.code === "fact_to_confirm") return row;
-  else if (item.code === "unknown_fact" || item.code === "inconsistent_fact") {
-    if (!usesDocuments(view) || !(item.documents && item.documents.length)) row.append(factInput(item));
-  } else if (view.document_types.includes(item.subject)) row.append(documentUpload(item.subject, view));
-  else row.append(documentInput(item));
+
+  // The action stays visible under the details: an upload, an answer, or a decision.
+  const types = documentsFor(item, view);
+  if (item.code === "fact_to_confirm") {
+    if (mayConfirm()) {
+      const decide = (accepted) => (event) => run(event.currentTarget, "Working…", async () => {
+        await api(`/cases/${view.case_id}/fact-decisions`, "POST", { name: item.subject, accepted, actor_id: "demo-user", role: state.role });
+        toast(accepted ? "Answer confirmed." : "Answer declined.", true);
+        await refresh();
+      });
+      row.append(el("div", { class: "answer" },
+        el("button", { class: "primary", onclick: decide(true) }, `Confirm "${answerText(item, item.reading.value)}"`),
+        el("button", { onclick: decide(false) }, "Decline")));
+    } else {
+      row.append(el("p", { class: "muted" }, "Nothing for you to do here."));
+    }
+  } else if (mayConfirm() || state.role === "observer") {
+    // The reviewer and the observer do not deliver information; the applicant does.
+    row.append(el("p", { class: "muted" }, item.code === "document_pending"
+      ? "Waiting for the applicant to submit the round."
+      : `Waiting for the applicant${types.length ? ` to upload the ${types.map(subject).join(" or ")}` : ""}.`));
+  } else if (item.subject === "design_model") {
+    row.append(el("p", {}, "Upload the proposed IFC model on the BIM model tab."));
+  } else if (item.code === "document_pending") {
+    row.append(el("p", { class: "muted" }, "Nothing to do yet: press Submit at the bottom to have it assessed."));
+  } else if (types.length) {
+    if (types.every((type) => offered.has(type))) {
+      row.append(el("p", { class: "muted" }, `Upload the ${subject(types[0])} above; it answers this as well.`));
+    } else {
+      types.forEach((type) => offered.add(type));
+      const verb = item.code === "document_incomplete" ? "Upload a corrected version" : `Upload the ${types.map(subject).join(" or ")}`;
+      row.append(el("p", {}, `${verb}:`), documentUpload(types, view));
+    }
+    if (item.code === "ai_question") row.append(answerInput(item));
+  } else if (item.code === "ai_question") {
+    row.append(answerInput(item));
+  } else if (item.code === "unknown_fact" || item.code === "inconsistent_fact") {
+    row.append(factInput(item));
+  } else {
+    row.append(documentInput(item));
+  }
   return row;
 }
 
-function factConfirmation(item, view, readOnly) {
-  const { value, quote, document } = item.reading;
-  const decide = (accepted) => (event) => run(event.currentTarget, "Working…", async () => {
-    await api(`/cases/${view.case_id}/fact-decisions`, "POST", { name: item.subject, accepted, actor_id: "demo-user", role: state.role });
-    toast(accepted ? "Fact confirmed." : "Fact declined.", true);
-    await refresh();
-  });
-  return el("div", {},
-    el("p", {}, `Read from ${subject(document)}: `, el("strong", {}, String(value))),
-    el("p", { class: "muted" }, `"${quote}"`),
-    !readOnly && el("div", { class: "answer" },
-      el("button", { class: "primary", onclick: decide(true) }, `Confirm as ${label("role", state.role)}`),
-      el("button", { onclick: decide(false) }, "Decline")));
+// A fact value as the answer to its question, for example Yes or No instead of true or false.
+function answerText(item, value) {
+  const choice = factChoices(item).find(([option]) => option === value);
+  return choice ? choice[1] : String(value);
 }
 
-function documentUpload(type, view) {
-  const input = el("input", { type: "file", accept: ".pdf", "aria-label": `File for ${subject(type)}` });
-  const row = el("div", { class: "answer" }, input, el("button", {
+const mayConfirm = () => (state.meta.resolution_roles || []).includes(state.role);
+const confirmers = () => (state.meta.resolution_roles || []).map((role) => label("role", role)).join(" or ");
+
+// A link to the original file of an uploaded document, or a note when it was not kept.
+function documentLink(view, evidenceId, text) {
+  const item = view.evidence.find((entry) => entry.evidence_id === evidenceId);
+  if (!item || !item.document) return null;
+  if (!item.file_kept) return el("span", { class: "muted" }, "Original file not kept (uploaded before files were stored)");
+  return el("a", { href: `/cases/${view.case_id}/documents/${encodeURIComponent(evidenceId)}/file?version=${item.version}`, target: "_blank", rel: "noopener" },
+    text || `Open ${subject(item.type)} (version ${item.version})`);
+}
+
+
+// Confirms every fact read from documents at once, one decision per fact as if confirmed one by one.
+function confirmAllButton(view) {
+  const items = view.assessment.deficiencies.filter((item) => item.code === "fact_to_confirm");
+  if (items.length < 2 || !mayConfirm()) return null;
+  return el("p", {}, el("button", {
+    class: "primary",
+    onclick: (event) => run(event.currentTarget, "Confirming…", async () => {
+      for (const item of items) {
+        await api(`/cases/${view.case_id}/fact-decisions`, "POST", { name: item.subject, accepted: true, actor_id: "demo-user", role: state.role });
+      }
+      toast(`${items.length} facts confirmed.`, true);
+      await refresh();
+    }),
+  }, `Confirm all ${items.length} answers read from documents`), " ", el("span", { class: "muted" }, "Each is recorded as a separate confirmation."));
+}
+
+// An upload for one of the given document types; with several, the applicant picks which one it is.
+function documentUpload(types, view) {
+  const choice = types.length > 1
+    ? el("select", { "aria-label": "Document type" }, types.map((type) => el("option", { value: type }, subject(type))))
+    : null;
+  const type = () => (choice ? choice.value : types[0]);
+  const input = el("input", { type: "file", accept: ".pdf", "aria-label": `File for ${types.map(subject).join(" or ")}` });
+  const row = el("div", { class: "answer" }, choice, input, el("button", {
+    class: "primary",
     onclick: (event) => {
       if (!input.files.length) return;
-      run(event.currentTarget, "Reading…", () => uploadDocument(view, type, input.files[0].name, input.files[0]));
+      run(event.currentTarget, "Reading…", () => uploadDocument(view, type(), input.files[0].name, input.files[0]));
     },
-  }, "Upload"));
+  }, types.length > 1 ? "Upload" : `Upload ${subject(types[0])}`));
   const sample = (incomplete) => (event) => run(event.currentTarget, "Reading…", async () => {
-    const blob = await (await fetch(`/demo/documents/${view.scenario}/${type}?incomplete=${incomplete}`)).blob();
-    await uploadDocument(view, type, `${type}.pdf`, blob);
+    const blob = await (await fetch(`/demo/documents/${view.scenario}/${type()}?incomplete=${incomplete}`)).blob();
+    await uploadDocument(view, type(), `${type()}.pdf`, blob);
   });
   if (view.scenario) row.append(el("button", { onclick: sample(false) }, "Use sample"), el("button", { onclick: sample(true) }, "Use incomplete sample"));
-  return el("div", {}, unreviewed(view, type) && badge("Uploaded, assessed in the next round", "info"), row);
+  const waiting = types.filter((item) => unreviewed(view, item));
+  return el("div", {}, waiting.length > 0 && badge(`${waiting.map(subject).join(", ")} uploaded, assessed when the round is submitted`, "info"), row);
 }
 
 async function uploadDocument(view, type, filename, content) {
@@ -524,21 +895,72 @@ async function uploadDocument(view, type, filename, content) {
   await refresh();
 }
 
-function documentRequests(view) {
-  const open = view.assessment.deficiencies;
-  const types = new Set(open.filter((item) => item.code === "unknown_fact").map((item) => (item.documents || [])[0]).filter(Boolean));
-  for (const item of open) types.delete(item.subject);
-  types.add("supporting_document");
-  return el("div", {}, el("h3", {}, "Documents to deliver"), [...types].map((type) => el("div", { class: "request" }, el("strong", {}, subject(type)), documentUpload(type, view))));
+function documentPanel(view, readOnly) {
+  const verdicts = Object.fromEntries(view.document_verdicts.map((verdict) => [verdict.evidence_id, verdict]));
+  const documents = view.evidence.filter((item) => item.document && view.document_specs[item.type]);
+  return el("section", { class: "panel" }, el("h2", {}, "Document assessment"),
+    el("p", { class: "muted" }, "Claude reports per checklist item and the application decides whether a document is complete. A reviewer can assess a document instead, for example once the AI has stopped."),
+    documents.map((item) => {
+      const verdict = verdicts[item.evidence_id];
+      const current = verdict && verdict.version === item.version ? verdict : null;
+      const byReviewer = current && current.assessed_by === "reviewer";
+      return el("div", { class: "request" },
+        el("div", { style: "float:right" }, documentLink(view, item.evidence_id, "Open")),
+        el("strong", {}, subject(item.type)), " ",
+        current ? badge(current.status === "complete" ? "Complete" : "Incomplete", current.status === "complete" ? "ok" : "bad") : badge("Not yet assessed", "warn"),
+        ` version ${item.version} `,
+        current ? badge(byReviewer ? `Assessed by ${label("role", current.role)}` : "Assessed by the AI", byReviewer ? "info" : "ai") : null,
+        current && current.problems.length > 0 && el("p", { class: "muted" }, current.problems.join(" ")),
+        current && el("ul", {}, current.checklist.map((entry) => el("li", {}, `${entry.present ? "Present" : "Missing"}: ${entry.item}${entry.location ? ` (${entry.location})` : ""}`))),
+        current && current.facts.length > 0 && el("p", {}, "Facts it proves: ", current.facts.map((fact) => `${subject(fact.name)}: ${fact.value}`).join("; ")),
+        !readOnly && el("p", {}, el("button", { onclick: () => documentDialog(item, view) }, byReviewer ? "Assess again as reviewer" : "Assess as reviewer")));
+    }));
 }
 
-function documentPanel(view) {
-  return el("section", { class: "panel" }, el("h2", {}, "Document assessment"),
-    el("p", { class: "muted" }, "Claude reports per checklist item. The application decides whether a document is complete."),
-    view.document_verdicts.map((verdict) => el("div", { class: "request" },
-      el("strong", {}, subject(verdict.type)), " ", badge(verdict.status === "complete" ? "Complete" : "Incomplete", verdict.status === "complete" ? "ok" : "bad"), ` version ${verdict.version}`,
-      verdict.problems.length > 0 && el("p", { class: "muted" }, verdict.problems.join(" ")),
-      el("ul", {}, verdict.checklist.map((entry) => el("li", {}, `${entry.present ? "Present" : "Missing"}: ${entry.item}${entry.location ? ` (${entry.location})` : ""}`))))));
+function documentDialog(item, view) {
+  const spec = view.document_specs[item.type];
+  const boxes = spec.must_contain.map((entry) => [entry, el("input", { type: "checkbox" })]);
+  const open = Object.fromEntries((view.assessment ? view.assessment.deficiencies : []).map((deficiency) => [deficiency.subject, deficiency]));
+  const facts = spec.proves.map((name) => {
+    const choices = factChoices(open[name] || { subject: name });
+    const title = (open[name] && open[name].question) || subject(name);
+    return [name, choices, el("select", { "aria-label": title }, el("option", { value: "" }, "Not stated"), choices.map(([, text], index) => el("option", { value: String(index) }, text))), title];
+  });
+  // Facts the case is waiting for come first; the others this document could prove are folded away.
+  const field = ([, , select, title]) => el("label", {}, title, select);
+  const asked = facts.filter(([name]) => open[name]);
+  const other = facts.filter(([name]) => !open[name]);
+  const note = el("textarea", { rows: 2, placeholder: "What you checked, or what is wrong" });
+  const dialog = $("dialog");
+  dialog.replaceChildren(el("form", { method: "dialog" },
+    el("h2", {}, `Assess ${subject(item.type)}`),
+    el("p", { class: "muted" }, `You are acting as ${label("role", state.role)}. Only ${(state.meta.resolution_roles || []).map((role) => label("role", role)).join(" or ")} may assess documents. No AI call is made.`),
+    el("h3", {}, "What the document contains"),
+    boxes.map(([entry, box]) => el("label", { class: "check" }, box, ` ${entry}`)),
+    facts.length > 0 && el("h3", {}, "What it proves"),
+    facts.length > 0 && el("p", { class: "muted" }, "Only when every item above is present. A fact you record counts as confirmed."),
+    asked.map(field),
+    other.length > 0 && el("details", {}, el("summary", {}, `${asked.length ? "Other facts" : "Facts"} this document can prove (${other.length})`), other.map(field)),
+    el("label", {}, "Note", note),
+    el("div", { class: "row" },
+      el("button", { value: "cancel" }, "Cancel"),
+      el("button", {
+        class: "primary",
+        onclick: (event) => {
+          event.preventDefault();
+          run(event.currentTarget, "Working…", async () => {
+            const stated = Object.fromEntries(facts.filter(([, , select]) => select.value !== "").map(([name, choices, select]) => [name, choices[Number(select.value)][0]]));
+            const present = boxes.filter(([, box]) => box.checked).map(([entry]) => entry);
+            dialog.close();
+            await api(`/cases/${view.case_id}/document-decisions`, "POST", {
+              evidence_id: item.evidence_id, present, facts: stated, note: note.value, actor_id: "demo-user", role: state.role,
+            });
+            toast("Document assessed.", true);
+            await refresh();
+          });
+        },
+      }, "Save assessment"))));
+  dialog.showModal();
 }
 
 function factChoices(item) {
@@ -652,7 +1074,9 @@ function issueRow(issue, view, readOnly) {
     el("strong", {}, label("issue", issue.kind)),
     el("p", {}, issue.detail),
     issue.rules.length ? el("p", { class: "muted" }, `Rules: ${issue.rules.join(", ")}`) : null,
-    !readOnly && el("button", { onclick: () => resolveDialog(issue, view) }, "Resolve"));
+    !readOnly && (mayConfirm()
+      ? el("button", { onclick: () => resolveDialog(issue, view) }, "Resolve")
+      : el("p", { class: "muted" }, `Waiting for ${confirmers()} to decide. Nothing for you to do here.`)));
 }
 
 function resolveDialog(issue, view) {
@@ -720,7 +1144,16 @@ function aiPanel(view, readOnly) {
     }
     panel.append(el("p", { class: "muted" }, `Advice from ${review.model}. Rules and evidence decide.`));
   }
-  if (!readOnly && state.meta.llm_enabled && review) {
+  if (view.ai_stop) panel.append(el("p", {}, badge("No further AI review", "bad"), ` ${label("aiStop", view.ai_stop)}. A reviewer takes over.`));
+  if (state.meta.llm_enabled && state.meta.ai) {
+    const { review: reviewer, documents } = state.meta.ai;
+    const name = (task) => `${task.model}${task.effort ? ` (effort ${task.effort})` : ""}`;
+    panel.append(el("p", { class: "muted" }, `Models: review ${name(reviewer)}, documents ${documents ? name(documents) : "read within the review"}.`));
+  }
+  if (state.meta.llm_enabled) {
+    panel.append(el("p", { class: "muted" }, `AI cost of this case: $${(view.llm_cost_usd || 0).toFixed(2)}${view.case_budget_usd != null ? ` of a $${view.case_budget_usd.toFixed(2)} budget` : ""}. Round ${view.review_round} of at most ${view.max_review_rounds}.`));
+  }
+  if (!readOnly && state.meta.llm_enabled && review && !view.ai_stop && view.review_round < view.max_review_rounds) {
     panel.append(el("p", {}, el("button", {
       class: "ai",
       onclick: (event) => run(event.currentTarget, "Claude is reviewing…", async () => {
@@ -765,6 +1198,14 @@ function describeEvent(event) {
       return payload.status === "completed"
         ? { title: `AI review, round ${payload.round}`, tag: "AI", cls: "ai", text: `${payload.summary} ${payload.information_requests.length} questions, ${(payload.sources || []).length} sources, ${(payload.citations || []).length} cited, ${(payload.document_verdicts || []).length} documents assessed.` }
         : { title: "AI review unavailable", tag: "AI", cls: "bad", text: payload.reason };
+    case "llm_documents_read":
+      return payload.status === "completed"
+        ? { title: "AI document check", tag: "AI", cls: "ai", text: payload.document_verdicts.map((item) => `${subject(item.type)}: ${item.status}`).join(", ") || "No documents reported." }
+        : { title: "AI document check unavailable", tag: "AI", cls: "bad", text: `${payload.reason}. The review reads the documents instead.` };
+    case "document_assessed":
+      return { title: `Document assessed by ${label("role", payload.role)}`, cls: payload.status === "complete" ? "ok" : "bad", text: `${subject(payload.type)}: ${payload.status}${payload.facts.length ? `, proves ${payload.facts.map((fact) => subject(fact.name)).join(", ")}` : ""}` };
+    case "llm_review_skipped":
+      return { title: "AI review not made", tag: "Cost limit", cls: "bad", text: `No call to the AI: ${label("aiStop", payload.reason)}.` };
     case "assessment_recorded":
       return { title: "Rules and evidence checked", tag: "H0.2–H0.5", text: `${payload.deficiencies.length} open items, ${payload.issues.length} escalations${payload.withdrawn_flags.length ? `, ${payload.withdrawn_flags.length} AI flags withdrawn` : ""}` };
     case "plan_recorded":
@@ -800,10 +1241,14 @@ function decider(event) {
       return { who: "Applicant", cls: "" };
     case "llm_review_recorded":
       return { who: "AI (advisory)", cls: "ai", why: "The AI advises. Its findings only count once the rules engine or a reviewer takes them over." };
+    case "llm_documents_read":
+      return { who: "AI (advisory)", cls: "ai", why: "The AI reports what each document contains. The application decides whether it is complete, and a reviewer confirms the facts." };
     case "assessment_recorded": {
       const usedAi = payload.llm_review || payload.deficiencies.some((item) => item.code === "ai_question") || payload.issues.some((item) => item.kind === "llm_flag");
       return { who: usedAi ? "Rules engine, with AI input" : "Rules engine", cls: "info", why: `Decided by the rules in pack ${payload.pack_version}${usedAi ? ". Items marked AI come from the AI review" : ""}.` };
     }
+    case "llm_review_skipped":
+      return { who: "System (cost limit)", cls: "info", why: "The application refuses further paid AI calls once a limit is reached, whatever is uploaded." };
     case "plan_recorded":
     case "stage_reversed":
       return { who: "Rules engine", cls: "info", why: `Decided by the process rules in pack ${state.latest ? state.latest.pack_version : "of this case"}.` };
@@ -817,6 +1262,9 @@ function decider(event) {
       return payload.role ? person(payload.role) : null;
   }
 }
+
+// The summary is made when the tool runs; the log keeps only the start of the result.
+const toolSummary = (call) => call.summary || `${call.result.slice(0, 120)}…`;
 
 // What each step was based on, from its recorded payload. Rows without content are left out.
 function stepBasis(event) {
@@ -838,8 +1286,33 @@ function stepBasis(event) {
       add("Change type", payload.change_type ? `${payload.change_type} (given by the applicant)` : "Left to the AI to classify");
       add("Facts stated", facts(payload.facts));
       break;
+    case "llm_documents_read":
+      add("Model", payload.model);
+      if (payload.usage) add("Tokens and cost", `${payload.usage.input_tokens.toLocaleString("en")} in, ${payload.usage.output_tokens.toLocaleString("en")} out, $${payload.usage.cost_usd.toFixed(3)} (${payload.usage.model || payload.model})`);
+      add("Reason", payload.reason);
+      add("Documents", list(payload.document_verdicts.map((item) => `${subject(item.type)}: ${item.status}${item.missing.length ? `, missing: ${item.missing.join("; ")}` : ""}${item.facts.length ? `, facts read: ${item.facts.map((fact) => `${subject(fact.name)} = ${fact.value}`).join(", ")}` : ""}`)));
+      break;
+    case "document_assessed":
+      add("Document", `${subject(payload.type)} (${payload.evidence_id}), version ${payload.version}`);
+      add("Actor", payload.actor_id);
+      add("Checklist", list(payload.checklist.map((entry) => `${entry.present ? "Present" : "Missing"}: ${entry.item}`)));
+      add("Facts confirmed", list(payload.facts.map((fact) => `${subject(fact.name)}: ${fact.value}`)));
+      add("Note", payload.note);
+      break;
+    case "llm_review_skipped":
+      add("Reason", label("aiStop", payload.reason));
+      add("Rounds", `${payload.round} of at most ${payload.max_review_rounds}`);
+      add("AI cost of this case", `$${payload.case_cost_usd.toFixed(2)}${payload.case_budget_usd != null ? ` of $${payload.case_budget_usd.toFixed(2)}` : ""}`);
+      add("Daily budget", payload.daily_budget_usd != null ? `$${payload.daily_budget_usd.toFixed(2)}` : null);
+      break;
     case "llm_review_recorded":
+      if (payload.usage) add("Tokens and cost", `${payload.usage.input_tokens.toLocaleString("en")} in, ${payload.usage.output_tokens.toLocaleString("en")} out${payload.usage.cache_read_tokens ? `, ${payload.usage.cache_read_tokens.toLocaleString("en")} from cache` : ""}, $${payload.usage.cost_usd.toFixed(3)}${payload.usage.turns > 1 ? ` over ${payload.usage.turns} turns` : ""} (${payload.usage.model || payload.model})`);
       if (payload.status !== "completed") { add("Reason", payload.reason); break; }
+      add("Looked up in the BIM model", list((payload.tool_calls || []).map((call) => [
+        el("code", {}, `${call.name}(${Object.entries(call.input).filter(([, value]) => value !== null && value !== "any").map(([key, value]) => `${key}=${value}`).join(", ")})`),
+        call.error ? [" ", badge("error", "bad")] : null,
+        el("div", { class: "muted" }, toolSummary(call)),
+      ])));
       add("Classification", `${payload.effective_change_type || payload.change_type}, confidence ${payload.confidence}, ${payload.materiality.replace("_", " ")}`);
       add("Domains", list(payload.domains.map((item) => `${label("domain", item.domain)}: ${label("domainStatus", item.status)}. ${item.rationale}`)));
       add("Information requested", list(payload.information_requests.map((item) => `${item.question}${item.document ? ` Document: ${subject(item.document)}.` : ""} Why: ${item.reason}`)));

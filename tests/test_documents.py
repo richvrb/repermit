@@ -82,7 +82,18 @@ def test_incomplete_sample_leaves_something_out():
 
 def test_statement_states_the_case_facts():
     text = read_document(sample_document("llm_free_text", "consultant_statement"))["text"]
-    assert "load_bearing: yes" in text.replace("\n", " ")
+    flat = " ".join(text.split())
+    assert "The works affect a load-bearing element of the building." in flat
+    assert "load_bearing" not in flat
+
+
+def test_samples_use_sentences_for_every_entry_and_fact():
+    from repermit.samples import ENTRIES, STATEMENTS
+
+    assert {item for document in PACK.documents.values() for item in document.must_contain} - {"Consultant's statement on each listed subject"} <= set(ENTRIES)
+    assert set(PACK.facts) - set(PACK.opening_facts) <= set(STATEMENTS)
+    for type in PACK.documents:
+        assert "As set out for this case" not in read_document(sample_document("llm_free_text", type))["text"]
 
 
 def test_coerce():

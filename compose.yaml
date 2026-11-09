@@ -5,7 +5,18 @@ services:
       REPERMIT_DATABASE_URL: postgresql+psycopg://repermit:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/repermit
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       REPERMIT_LLM_PROVIDER: ${REPERMIT_LLM_PROVIDER:-anthropic}
-      REPERMIT_LLM_MODEL: ${REPERMIT_LLM_MODEL:-claude-sonnet-5-5}
+      # A model per AI task. Without a documents model, the review reads documents itself.
+      REPERMIT_AI_REVIEW_MODEL: ${REPERMIT_AI_REVIEW_MODEL:-${REPERMIT_LLM_MODEL:-claude-sonnet-5-5}}
+      REPERMIT_AI_REVIEW_EFFORT: ${REPERMIT_AI_REVIEW_EFFORT:-high}
+      # Calls the review may make to the BIM model tools; 0 switches them off.
+      REPERMIT_AI_BIM_TOOL_CALLS: ${REPERMIT_AI_BIM_TOOL_CALLS:-6}
+      REPERMIT_AI_DOCUMENTS_MODEL: ${REPERMIT_AI_DOCUMENTS_MODEL:-}
+      REPERMIT_AI_DOCUMENTS_EFFORT: ${REPERMIT_AI_DOCUMENTS_EFFORT:-medium}
+      # Models that can be chosen on the Settings page.
+      REPERMIT_AI_ALLOWED_MODELS: ${REPERMIT_AI_ALLOWED_MODELS:-claude-haiku-5-5,claude-sonnet-5-5,claude-opus-5-5}
+      # Hard caps on paid AI calls; a case that hits one goes to a reviewer.
+      REPERMIT_CASE_BUDGET_USD: ${REPERMIT_CASE_BUDGET_USD:-1.00}
+      REPERMIT_DAILY_BUDGET_USD: ${REPERMIT_DAILY_BUDGET_USD:-5.00}
     volumes:
       # Full source texts stay out of the image. Build them with: python -m repermit.ingest
       - ./knowledge:/app/knowledge:ro

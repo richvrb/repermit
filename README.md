@@ -89,4 +89,15 @@ Keep the virtual environment out of this synced folder. Specifications live in `
 | `REPERMIT_PACK_PATH` | bundled public-source pack |
 | `ANTHROPIC_API_KEY` | none |
 | `REPERMIT_LLM_PROVIDER` | `anthropic` (`none` disables the LLM) |
-| `REPERMIT_LLM_MODEL` | `claude-sonnet-5-5` |
+| `REPERMIT_AI_REVIEW_MODEL` | `claude-sonnet-5-5`: the review that classifies, assesses domains and asks questions (`REPERMIT_LLM_MODEL` is the older name) |
+| `REPERMIT_AI_REVIEW_EFFORT` | `high` (`low`, `medium`, `high`, `xhigh`, `max`) |
+| `REPERMIT_AI_BIM_TOOL_CALLS` | `6`: tool calls per review into the IFC models (overview, find elements, element details, nearby elements); `0` switches the tools off |
+| `REPERMIT_AI_DOCUMENTS_MODEL` | empty: the review reads new documents itself. Set a model, such as `claude-haiku-5-5`, to check documents in a separate call before the review, which then receives only the outcome |
+| `REPERMIT_AI_DOCUMENTS_EFFORT` | `medium` |
+| `REPERMIT_AI_ALLOWED_MODELS` | `claude-haiku-5-5,claude-sonnet-5-5,claude-opus-5-5`: the models that can be chosen on the Settings page |
+| `REPERMIT_CASE_BUDGET_USD` | `1.00`: no further AI calls for a case once its calls cost this much |
+| `REPERMIT_DAILY_BUDGET_USD` | `5.00`: no AI calls for any case once today's calls (UTC) cost this much |
+
+The Settings page shows the model and effort per AI task, the knowledge retrieval and the budgets, and can change them. For retrieval it switches passages on or off and sets how many passages (up to 10) and knowledge cards (up to 5) each review receives; the relevance thresholds stay fixed, and sources are switched on or off in `sources.yaml`. The variables above are the start values, and the budgets are also the maximum: the page can only lower them. Every change is stored with who made it, and the last one applies again after a restart. There is no login yet, so anyone with access can change settings within these limits.
+
+Each AI call records its tokens and cost in the case history. After the last review round, or once a budget is spent, the application makes no further calls for that case, whatever is uploaded, and hands the case to a reviewer as an escalation. Costs are estimated from list prices in `llm.py`. Set a spending limit in the Anthropic Console as well.

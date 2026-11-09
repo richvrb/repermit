@@ -18,6 +18,11 @@ class CaseState:
     base_revision: str = ""
     scenario: str | None = None
     review_rounds: int = 0
+    # Calls since the last modification, including failed ones, and the cost of all calls in this case.
+    review_attempts: int = 0
+    llm_cost_usd: float = 0.0
+    # Why the latest review was not made, until a review is made again.
+    ai_stop: str | None = None
     document_verdicts: dict[str, dict] = field(default_factory=dict)
     declined_facts: set[tuple[str, str]] = field(default_factory=set)
     modification: dict | None = None
@@ -47,9 +52,21 @@ class CaseState:
                 self.revision = payload["revision"]
                 self.llm_review = None
                 self.review_rounds = 0
+                self.review_attempts = 0
+                self.ai_stop = None
+            case "llm_documents_read":
+                self.document_verdicts |= {item["evidence_id"]: item for item in payload["document_verdicts"]}
+                self.llm_cost_usd += (payload.get("usage") or {}).get("cost_usd") or 0.0
+            case "document_assessed":
+                self.document_verdicts[payload["evidence_id"]] = payload
+            case "llm_review_skipped":
+                self.ai_stop = payload["reason"]
             case "llm_review_recorded":
                 self.llm_review = payload
                 self.review_rounds += payload["status"] == "completed"
+                self.review_attempts += 1
+                self.llm_cost_usd += (payload.get("usage") or {}).get("cost_usd") or 0.0
+                self.ai_stop = None
                 self.document_verdicts |= {item["evidence_id"]: item for item in payload.get("document_verdicts", [])}
                 if self.modification["change_type_source"] == "llm":
                     self.modification["change_type"] = payload["effective_change_type"]

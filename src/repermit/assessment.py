@@ -95,6 +95,29 @@ def find_gaps(state: CaseState, pack: Pack, context: dict[str, Any]) -> list[dic
     return [issue for issue in issues if issue["id"] not in state.resolutions]
 
 
+AI_STOP_DETAIL = {
+    "round_limit": "the review round limit is reached",
+    "case_budget": "the AI budget of this case is spent",
+    "daily_budget": "the daily AI budget is spent",
+}
+
+
+def stop_issues(state: CaseState) -> list[dict]:
+    """A review that was needed but not made hands the case to a reviewer."""
+    if not state.ai_stop:
+        return []
+    issue_id = f"ai_stop:{state.revision}:{state.ai_stop}"
+    if issue_id in state.resolutions:
+        return []
+    return [{
+        "id": issue_id,
+        "kind": "ai_stopped",
+        "detail": f"No further AI review: {AI_STOP_DETAIL.get(state.ai_stop, state.ai_stop)}. A reviewer must assess the information added since.",
+        "rules": [],
+        "sources": [],
+    }]
+
+
 def open_questions(state: CaseState, pack: Pack) -> list[dict]:
     """Questions of the latest review hold the case until the round limit."""
     review = state.llm_review
@@ -197,7 +220,8 @@ def check_document(evidence_type: str, domain: str, state: CaseState, pack: Pack
     item = next(item for item in state.latest_evidence() if item["type"] == evidence_type)
     verdict = state.document_verdicts.get(item["evidence_id"])
     if verdict is None or verdict["version"] != item["version"]:
-        return {"code": "document_pending", "domain": domain, "subject": evidence_type, "detail": "Waiting for the assessment in the next round."}
+        detail = "Not assessed: the AI review has stopped, so a reviewer must check it." if state.ai_stop else "Waiting for the assessment in the next round."
+        return {"code": "document_pending", "domain": domain, "subject": evidence_type, "detail": detail}
     if verdict["status"] == "incomplete":
         details = verdict["problems"] + [f"Missing: {entry}" for entry in verdict["missing"]]
         return {"code": "document_incomplete", "domain": domain, "subject": evidence_type, "detail": " ".join(details)}
@@ -264,6 +288,7 @@ def pending_assessment(state: CaseState, pack: Pack, today: date, facts: dict[st
     deficiencies = ([model] if model else []) + [
         unknown_fact(name, "permitting", pack) for name in pack.opening_facts if name not in facts
     ]
+    issues = stop_issues(state)
     return {
         "revision": state.revision,
         "pack_version": pack.version,
@@ -271,11 +296,11 @@ def pending_assessment(state: CaseState, pack: Pack, today: date, facts: dict[st
         "applied_rules": [],
         "impact": [],
         "deficiencies": deficiencies,
-        "issues": [],
+        "issues": issues,
         "withdrawn_flags": [],
         "llm_review": None,
         "basis": {"revision": state.revision, "evidence": {item["evidence_id"]: item["version"] for item in state.latest_evidence()}},
-        "fingerprint": fingerprint(domains, deficiencies, []),
+        "fingerprint": fingerprint(domains, deficiencies, issues),
         "disclaimer": DISCLAIMER,
     }
 
@@ -332,7 +357,7 @@ def assess(state: CaseState, pack: Pack, today: date) -> dict:
                 deficiencies.append(deficiency)
 
     llm_issues, withdrawn = find_llm_issues(state, domains, pack)
-    issues += llm_issues
+    issues += llm_issues + stop_issues(state)
 
     return {
         "revision": state.revision,

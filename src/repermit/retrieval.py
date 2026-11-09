@@ -81,6 +81,45 @@ class Retriever:
     def __init__(self, index: Path | str, sources_path: Path = SOURCES):
         self.index = Path(index)
         self.sources_path = sources_path
+        # Adjustable on the Settings page; the relevance thresholds stay fixed.
+        self.enabled = True
+        self.card_limits = dict(CARD_LIMITS)
+        self.passage_limits = dict(PASSAGE_LIMITS)
+
+    def _connect(self) -> sqlite3.Connection:
+        return sqlite3.connect(f"{self.index.resolve().as_uri()}?mode=ro&immutable=1", uri=True)
+
+    def stats(self) -> dict[str, int]:
+        """Passages in the index per source."""
+        connection = self._connect()
+        try:
+            return dict(connection.execute("SELECT source, count(*) FROM passages GROUP BY source").fetchall())
+        finally:
+            connection.close()
+
+    def browse(self, source: str | None = None, query: str | None = None, offset: int = 0, limit: int = 20) -> dict:
+        """Passages as they are in the index, for people to look through; unlike search, no thresholds apply."""
+        words = terms(query or "")
+        clauses, params = [], []
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        if words:
+            clauses.append("passages MATCH ?")
+            params.append("text : (" + " AND ".join(f'"{word}"' for word in words) + ")")
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        order = "ORDER BY bm25(passages)" if words else "ORDER BY rowid"
+        connection = self._connect()
+        try:
+            total = connection.execute(f"SELECT count(*) FROM passages {where}", params).fetchone()[0]
+            rows = connection.execute(
+                f"SELECT id, source, reference, url, jurisdiction, status, text FROM passages {where} {order} LIMIT ? OFFSET ?",
+                [*params, limit, offset],
+            ).fetchall()
+        finally:
+            connection.close()
+        keys = ("id", "source", "reference", "url", "jurisdiction", "status", "text")
+        return {"total": total, "offset": offset, "items": [dict(zip(keys, row)) for row in rows]}
 
     def search(self, query: str, authority: str | None) -> list[dict]:
         words = terms(query)
@@ -89,11 +128,11 @@ class Retriever:
         # Read per search, so switching off a source needs no rebuild.
         sources = load_sources(self.sources_path)
         match = " OR ".join(f'"{word}"' for word in words)
-        connection = sqlite3.connect(f"{self.index.resolve().as_uri()}?mode=ro&immutable=1", uri=True)
+        connection = self._connect()
         try:
             # Cards are ranked apart: they are short, and the 843-page code would crowd them out.
-            cards = self._ranked(connection, match, "source = ?", sources, authority, words, CARD_LIMITS)
-            passages = self._ranked(connection, match, "source != ?", sources, authority, words, PASSAGE_LIMITS)
+            cards = self._ranked(connection, match, "source = ?", sources, authority, words, self.card_limits)
+            passages = self._ranked(connection, match, "source != ?", sources, authority, words, self.passage_limits)
         finally:
             connection.close()
         return cards + passages
@@ -123,5 +162,7 @@ class Retriever:
         return kept
 
     def for_case(self, state: CaseState) -> list[dict]:
+        if not self.enabled:
+            return []
         authority = collect_facts(state)[0].get("competent_entity")
         return self.search(case_query(state), authority)

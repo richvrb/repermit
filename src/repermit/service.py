@@ -4,15 +4,20 @@ import uuid
 from collections.abc import Callable
 from datetime import date, datetime, timezone
 
-from repermit.assessment import assess, check_required
+from repermit.assessment import AI_STOP_DETAIL, assess, check_required
 from repermit.bim import MAX_LISTED_CHANGES, InvalidModel, compare, derive_facts, read_model
-from repermit.documents import InvalidDocument, judge_reviews, read_document
+from repermit.documents import InvalidDocument, coerce, judge_reviews, read_document
 from repermit.control import derive_status, is_authorized, plan
 from repermit.knowledge import Action, Pack
-from repermit.llm import Assessor, AssessorUnavailable, completed_payload, unavailable_payload
+from repermit.llm import Assessor, AssessorUnavailable, DocumentReader, completed_payload, is_unread, unavailable_payload
 from repermit.retrieval import Retriever
 from repermit.state import CaseState, fold
 from repermit.store import EventStore
+
+# Failed calls beyond the round limit before the AI stops for this modification.
+MAX_FAILED_ATTEMPTS = 2
+# Stored with the evidence, but too large to show: model elements and details, and document text.
+BULKY = ("elements", "details", "text")
 
 
 class CaseNotFound(Exception):
@@ -79,12 +84,19 @@ class CaseService:
         assessor: Assessor | None = None,
         packs: dict[str, Pack] | None = None,
         retriever: Retriever | None = None,
+        case_budget_usd: float | None = None,
+        daily_budget_usd: float | None = None,
+        document_reader: DocumentReader | None = None,
     ):
         self.store = store
         self.pack = pack
         self.today = today
         self.assessor = assessor
+        # Without a separate reader, the review itself reads new documents.
+        self.document_reader = document_reader
         self.retriever = retriever
+        self.case_budget_usd = case_budget_usd
+        self.daily_budget_usd = daily_budget_usd
         self.packs = {**(packs or {}), pack.version: pack}
 
     def open_case(
@@ -123,6 +135,9 @@ class CaseService:
             raise InvalidRequest("a review needs a configured LLM and a submitted modification")
         if self._awaiting_model(unit):
             raise InvalidRequest("the first review follows when the design model is delivered")
+        stop = self._stop_reason(unit)
+        if stop:
+            raise InvalidRequest(f"no further AI review: {AI_STOP_DETAIL[stop]}")
         self._review(unit)
         self._progress(unit)
         return self._commit(unit)
@@ -154,6 +169,7 @@ class CaseService:
             model={**parsed["summary"], "filename": filename, "compared": baseline is not None and kind == "proposed"},
             changes=changes[:MAX_LISTED_CHANGES],
             elements=parsed["elements"],
+            details=parsed["details"],
         ))
         self._after_information(unit)
         return self._commit(unit)
@@ -168,6 +184,8 @@ class CaseService:
             parsed = read_document(content)
         except InvalidDocument as error:
             raise InvalidRequest(str(error)) from error
+        # Kept before the event, so a recorded document always has its file.
+        self.store.save_file(parsed["document"]["sha256"], content)
         self._add_evidence(unit, _item(
             f"{type}-{state.revision}", type, "general", state.revision, format="pdf", description=filename,
             document={**parsed["document"], "filename": filename}, text=parsed["text"],
@@ -197,6 +215,51 @@ class CaseService:
             ))
         else:
             unit.emit("fact_declined", {"name": name, "evidence_id": reading["evidence_id"], "actor_id": decision["actor_id"], "role": role})
+        self._progress(unit)
+        return self._commit(unit)
+
+    def assess_document(self, case_id: str, decision: dict) -> dict:
+        """A reviewer assesses a document instead of the AI. Facts a reviewer records count as confirmed."""
+        unit = self._load(case_id)
+        state, pack = unit.state, unit.pack
+        evidence_id, role = decision["evidence_id"], decision["role"]
+        item = next((item for item in state.latest_evidence() if item["evidence_id"] == evidence_id and item["type"] in pack.documents), None)
+        if item is None:
+            raise UnknownItem(f"no document {evidence_id}")
+        if role not in pack.resolution_roles:
+            unit.emit("resolution_denied", {"issue_id": f"document:{evidence_id}", "actor_id": decision["actor_id"], "role": role})
+            self._commit(unit)
+            raise ActionForbidden(f"role {role} may not assess documents")
+        spec = pack.documents[item["type"]]
+        present = set(decision["present"])
+        if present - set(spec.must_contain):
+            raise InvalidRequest(f"unknown checklist items: {sorted(present - set(spec.must_contain))}")
+        facts = {name: coerce(str(value)) for name, value in decision["facts"].items() if str(value).strip()}
+        if set(facts) - set(spec.proves):
+            raise InvalidRequest(f"a {item['type']} does not prove {sorted(set(facts) - set(spec.proves))}")
+        missing = [entry for entry in spec.must_contain if entry not in present]
+        if facts and missing:
+            raise InvalidRequest("facts can only be taken from a complete document")
+        note = (decision["note"] or "").strip()
+        unit.emit("document_assessed", {
+            "evidence_id": evidence_id,
+            "version": item["version"],
+            "type": item["type"],
+            "status": "incomplete" if missing else "complete",
+            "missing": missing,
+            "problems": [note] if note and missing else [],
+            "checklist": [{"item": entry, "present": entry in present, "location": ""} for entry in spec.must_contain],
+            "facts": [{"name": name, "value": value, "quote": note or "Recorded by the reviewer."} for name, value in facts.items()],
+            "assessed_by": "reviewer",
+            "actor_id": decision["actor_id"],
+            "role": role,
+            "note": note,
+        })
+        for name, value in facts.items():
+            self._add_evidence(unit, _item(
+                f"confirmed-{name}", "confirmed_fact", "general", state.revision, facts={name: value},
+                description=f"Recorded by {role} from {item['type']}{f': {note}' if note else ''}",
+            ))
         self._progress(unit)
         return self._commit(unit)
 
@@ -291,6 +354,18 @@ class CaseService:
             cases.append({key: view[key] for key in ("case_id", "project_name", "permit_type", "revision", "stage", "status")})
         return cases
 
+    def document_file(self, case_id: str, evidence_id: str, version: int | None = None) -> tuple[bytes, str]:
+        """The original file of an uploaded document, and its file name."""
+        state = self._load(case_id).state
+        versions = [item for item in state.evidence.get(evidence_id, []) if item.get("document")]
+        item = next((item for item in reversed(versions) if version in (None, item["version"])), None)
+        if item is None:
+            raise UnknownItem(f"no document {evidence_id}" + (f" version {version}" if version else ""))
+        content = self.store.load_file(item["document"]["sha256"])
+        if content is None:
+            raise UnknownItem("the original file was not kept: it was uploaded before files were stored")
+        return content, item["document"].get("filename") or f"{evidence_id}.pdf"
+
     def get_history(self, case_id: str) -> list[dict]:
         events = self.store.load(case_id)
         if not events:
@@ -343,19 +418,68 @@ class CaseService:
         unit.pending = []
         return self._view(unit.state)
 
+    def _stop_reason(self, unit: _Unit) -> str | None:
+        """Hard limits on paid calls. They hold whatever the client keeps sending."""
+        state, limit = unit.state, unit.pack.max_review_rounds
+        if state.review_rounds >= limit or state.review_attempts >= limit + MAX_FAILED_ATTEMPTS:
+            return "round_limit"
+        if self.case_budget_usd is not None and state.llm_cost_usd >= self.case_budget_usd:
+            return "case_budget"
+        if self.daily_budget_usd is not None:
+            midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+            if self.store.llm_cost_since(midnight.isoformat()) >= self.daily_budget_usd:
+                return "daily_budget"
+        return None
+
+    def _read_documents(self, unit: _Unit) -> None:
+        """The document check on its own model, before the review, so the review no longer needs the full texts."""
+        state, reader = unit.state, self.document_reader
+        if reader is None or not any(is_unread(item, state, unit.pack) for item in state.latest_evidence()):
+            return
+        try:
+            reading = reader.read_documents(state, unit.pack)
+        except AssessorUnavailable as error:
+            # The review then reads the documents itself.
+            unit.emit("llm_documents_read", {"status": "unavailable", "reason": str(error), "model": reader.model, "document_verdicts": [], "usage": error.usage})
+            return
+        reviews = [item.model_dump() for item in reading.document_reviews]
+        unit.emit("llm_documents_read", {
+            "status": "completed",
+            "model": reader.model,
+            "document_verdicts": judge_reviews(reviews, state, unit.pack),
+            "usage": getattr(reading, "_usage", None),
+        })
+
     def _review(self, unit: _Unit) -> None:
         if self.assessor is None:
             return
         state, model = unit.state, self.assessor.model
+        stop = self._stop_reason(unit)
+        if not stop:
+            self._read_documents(unit)
+            stop = self._stop_reason(unit)
+        if stop:
+            unit.emit("llm_review_skipped", {
+                "reason": stop,
+                "round": state.review_rounds,
+                "max_review_rounds": unit.pack.max_review_rounds,
+                "case_cost_usd": round(state.llm_cost_usd, 4),
+                "case_budget_usd": self.case_budget_usd,
+                "daily_budget_usd": self.daily_budget_usd,
+            })
+            return
         passages = self.retriever.for_case(state) if self.retriever else []
         try:
             review = self.assessor.review(state, unit.pack, passages)
         except AssessorUnavailable as error:
             payload = unavailable_payload(str(error), state.revision, model)
+            usage = error.usage
         else:
             payload = completed_payload(review, state.revision, model, unit.pack, passages)
             payload["document_verdicts"] = judge_reviews(payload["document_reviews"], state, unit.pack)
-        unit.emit("llm_review_recorded", {**payload, "round": state.review_rounds + 1})
+            payload["tool_calls"] = getattr(review, "_tool_calls", [])
+            usage = getattr(review, "_usage", None)
+        unit.emit("llm_review_recorded", {**payload, "round": state.review_rounds + 1, "usage": usage})
 
     def _reassess(self, unit: _Unit) -> None:
         state = unit.state
@@ -406,6 +530,11 @@ class CaseService:
 
     def _view(self, state: CaseState) -> dict:
         pack = self._pack_of(state)
+        kept = self.store.stored_files({item["document"]["sha256"] for item in state.latest_evidence() if item.get("document")})
+        evidence = [
+            {key: value for key, value in item.items() if key not in BULKY} | ({"file_kept": item["document"]["sha256"] in kept} if item.get("document") else {})
+            for item in state.latest_evidence()
+        ]
         return {
             "case_id": state.case_id,
             "project_name": state.project_name,
@@ -417,13 +546,17 @@ class CaseService:
             "stage": state.stage,
             "status": derive_status(state, pack),
             "modification": state.modification,
-            "evidence": [{key: value for key, value in item.items() if key not in ("elements", "text")} for item in state.latest_evidence()],
+            "evidence": evidence,
             "document_verdicts": list(state.document_verdicts.values()),
             "document_types": sorted(pack.documents),
+            "document_specs": {name: spec.model_dump(include={"must_contain", "proves"}) for name, spec in pack.documents.items()},
             "scenario": state.scenario,
             "bim_required": state.permit_type in pack.bim_required_for,
             "review_round": state.review_rounds,
             "max_review_rounds": pack.max_review_rounds,
+            "ai_stop": state.ai_stop,
+            "llm_cost_usd": round(state.llm_cost_usd, 4),
+            "case_budget_usd": self.case_budget_usd,
             "resolutions": list(state.resolutions.values()),
             "assessment": state.assessment,
             "plan": plan(state, pack),
